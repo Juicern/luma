@@ -22,7 +22,7 @@ func (r *PromptPresetRepository) List(ctx context.Context, userID string) ([]dom
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, name, prompt_text, created_at, updated_at
 		FROM user_prompt_presets
-		WHERE user_id = ?
+		WHERE user_id = $1
 		ORDER BY created_at DESC
 	`, userID)
 	if err != nil {
@@ -47,7 +47,7 @@ func (r *PromptPresetRepository) Get(ctx context.Context, id string) (domain.Pro
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, name, prompt_text, created_at, updated_at
 		FROM user_prompt_presets
-		WHERE id = ?
+		WHERE id = $1
 	`, id).Scan(&preset.ID, &preset.UserID, &preset.Name, &preset.PromptText, &preset.CreatedAt, &preset.UpdatedAt)
 	return preset, err
 }
@@ -65,7 +65,7 @@ func (r *PromptPresetRepository) Create(ctx context.Context, userID, name, promp
 
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO user_prompt_presets (id, user_id, name, prompt_text, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, preset.ID, preset.UserID, preset.Name, preset.PromptText, preset.CreatedAt, preset.UpdatedAt)
 	return preset, err
 }
@@ -74,8 +74,8 @@ func (r *PromptPresetRepository) Update(ctx context.Context, id, name, promptTex
 	now := time.Now().UTC()
 	if _, err := r.db.ExecContext(ctx, `
 		UPDATE user_prompt_presets
-		SET name = ?, prompt_text = ?, updated_at = ?
-		WHERE id = ?
+		SET name = $1, prompt_text = $2, updated_at = $3
+		WHERE id = $4
 	`, name, promptText, now, id); err != nil {
 		return domain.PromptPreset{}, err
 	}
@@ -83,6 +83,6 @@ func (r *PromptPresetRepository) Update(ctx context.Context, id, name, promptTex
 }
 
 func (r *PromptPresetRepository) Delete(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM user_prompt_presets WHERE id = ?`, id)
+	_, err := r.db.ExecContext(ctx, `DELETE FROM user_prompt_presets WHERE id = $1`, id)
 	return err
 }

@@ -24,7 +24,7 @@ func (r *SystemPromptRepository) GetActive(ctx context.Context) (domain.SystemPr
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, prompt_text, active, created_at, updated_at
 		FROM system_prompts
-		WHERE active = 1
+		WHERE active = TRUE
 		ORDER BY updated_at DESC
 		LIMIT 1
 	`).Scan(&prompt.ID, &prompt.PromptText, &prompt.Active, &prompt.CreatedAt, &prompt.UpdatedAt)
@@ -45,7 +45,7 @@ func (r *SystemPromptRepository) Upsert(ctx context.Context, promptText string) 
 	defer tx.Rollback()
 
 	var prompt domain.SystemPrompt
-	err = tx.QueryRowContext(ctx, `SELECT id, prompt_text, active, created_at, updated_at FROM system_prompts WHERE active = 1 LIMIT 1`).
+	err = tx.QueryRowContext(ctx, `SELECT id, prompt_text, active, created_at, updated_at FROM system_prompts WHERE active = TRUE LIMIT 1`).
 		Scan(&prompt.ID, &prompt.PromptText, &prompt.Active, &prompt.CreatedAt, &prompt.UpdatedAt)
 	now := time.Now().UTC()
 	if err != nil {
@@ -59,7 +59,7 @@ func (r *SystemPromptRepository) Upsert(ctx context.Context, promptText string) 
 			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO system_prompts (id, prompt_text, active, created_at, updated_at)
-				VALUES (?, ?, 1, ?, ?)
+				VALUES ($1, $2, TRUE, $3, $4)
 			`, prompt.ID, prompt.PromptText, prompt.CreatedAt, prompt.UpdatedAt); err != nil {
 				return domain.SystemPrompt{}, err
 			}
@@ -71,8 +71,8 @@ func (r *SystemPromptRepository) Upsert(ctx context.Context, promptText string) 
 		prompt.UpdatedAt = now
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE system_prompts
-			SET prompt_text = ?, updated_at = ?
-			WHERE id = ?
+			SET prompt_text = $1, updated_at = $2
+			WHERE id = $3
 		`, prompt.PromptText, prompt.UpdatedAt, prompt.ID); err != nil {
 			return domain.SystemPrompt{}, err
 		}

@@ -32,7 +32,7 @@ func (r *SessionRepository) Create(ctx context.Context, session domain.Session) 
 		INSERT INTO sessions (
 			id, preset_id, provider_name, model, temporary_prompt, context_text,
 			clipboard_enabled, system_prompt_id, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, session.ID, session.PresetID, session.ProviderName, session.Model, session.TemporaryPrompt, session.ContextText,
 		session.ClipboardEnabled, session.SystemPromptID, session.CreatedAt, session.UpdatedAt)
 
@@ -42,8 +42,8 @@ func (r *SessionRepository) Create(ctx context.Context, session domain.Session) 
 func (r *SessionRepository) UpdateContext(ctx context.Context, id string, temporaryPrompt, contextText *string, clipboard bool) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE sessions
-		SET temporary_prompt = ?, context_text = ?, clipboard_enabled = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
+		SET temporary_prompt = $1, context_text = $2, clipboard_enabled = $3, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $4
 	`, temporaryPrompt, contextText, clipboard, id)
 	return err
 }
@@ -53,7 +53,7 @@ func (r *SessionRepository) List(ctx context.Context, limit int) ([]domain.Sessi
 		SELECT id, preset_id, provider_name, model, temporary_prompt, context_text, clipboard_enabled, system_prompt_id, created_at, updated_at
 		FROM sessions
 		ORDER BY created_at DESC
-		LIMIT ?
+		LIMIT $1
 	`, limit)
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func (r *SessionRepository) Get(ctx context.Context, id string) (domain.Session,
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, preset_id, provider_name, model, temporary_prompt, context_text, clipboard_enabled, system_prompt_id, created_at, updated_at
 		FROM sessions
-		WHERE id = ?
+		WHERE id = $1
 	`, id).Scan(&session.ID, &session.PresetID, &session.ProviderName, &session.Model, &session.TemporaryPrompt, &session.ContextText,
 		&session.ClipboardEnabled, &session.SystemPromptID, &session.CreatedAt, &session.UpdatedAt)
 	return session, err

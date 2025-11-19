@@ -46,7 +46,7 @@ func (r *APIKeyRepository) Upsert(ctx context.Context, provider, encrypted strin
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, provider_name, encrypted_key, created_at, updated_at
 		FROM api_keys
-		WHERE provider_name = ?
+		WHERE provider_name = $1
 	`, provider).Scan(&existing.ID, &existing.ProviderName, &existing.EncryptedKey, &existing.CreatedAt, &existing.UpdatedAt)
 
 	if err == sql.ErrNoRows {
@@ -59,7 +59,7 @@ func (r *APIKeyRepository) Upsert(ctx context.Context, provider, encrypted strin
 		}
 		_, err := r.db.ExecContext(ctx, `
 			INSERT INTO api_keys (id, provider_name, encrypted_key, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?)
+			VALUES ($1, $2, $3, $4, $5)
 		`, existing.ID, existing.ProviderName, existing.EncryptedKey, existing.CreatedAt, existing.UpdatedAt)
 		return existing, err
 	}
@@ -73,14 +73,14 @@ func (r *APIKeyRepository) Upsert(ctx context.Context, provider, encrypted strin
 
 	_, err = r.db.ExecContext(ctx, `
 		UPDATE api_keys
-		SET encrypted_key = ?, updated_at = ?
-		WHERE id = ?
+		SET encrypted_key = $1, updated_at = $2
+		WHERE id = $3
 	`, existing.EncryptedKey, existing.UpdatedAt, existing.ID)
 	return existing, err
 }
 
 func (r *APIKeyRepository) Delete(ctx context.Context, provider string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM api_keys WHERE provider_name = ?`, provider)
+	_, err := r.db.ExecContext(ctx, `DELETE FROM api_keys WHERE provider_name = $1`, provider)
 	return err
 }
 
@@ -89,7 +89,7 @@ func (r *APIKeyRepository) GetByProvider(ctx context.Context, provider string) (
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, provider_name, encrypted_key, created_at, updated_at
 		FROM api_keys
-		WHERE provider_name = ?
+		WHERE provider_name = $1
 	`, provider).Scan(&key.ID, &key.ProviderName, &key.EncryptedKey, &key.CreatedAt, &key.UpdatedAt)
 	return key, err
 }

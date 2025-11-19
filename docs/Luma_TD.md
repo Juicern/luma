@@ -52,14 +52,14 @@ Speech-to-Text  LLM Service    Local DB (SQLite)
 
 ### Backend
 
-- Language: **Golang 1.22+**
-- HTTP router: Chi, Fiber, or standard `net/http` with middleware.
+- Language: **Golang 1.24+**
+- HTTP router: **Gin** (structured middleware and JSON helpers).
 - Database:
-  - MVP: **SQLite** (file-based, e.g. `./data/luma.db`)
-  - Future: Postgres (same schema, with minimal changes).
-- Migrations: `golang-migrate` or similar tool (SQL-based migrations).
-- Config: Viper or a minimal custom loader for `config.yaml`.
-- Logging: `zap` or standard library logger.
+  - Default: **SQLite** (file-based, e.g. `./data/luma.db`).
+  - Optional: **Postgres** via DSN (`LUMA_DB_DRIVER=postgres`).
+- Migrations: SQL strings checked into the repo and executed on startup via the server or `cmd/migrate`.
+- Config: Lightweight YAML + env loader (`internal/config`).
+- Logging: standard library `slog` (JSON handler).
 - HTTP client: standard `net/http` for calling external APIs (STT + LLM).
 
 ### External Services
@@ -98,7 +98,7 @@ Stores the global system prompt text.
 CREATE TABLE system_prompts (
     id           TEXT PRIMARY KEY,          -- UUID
     prompt_text  TEXT NOT NULL,
-    active       BOOLEAN NOT NULL DEFAULT 1,
+    active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -155,24 +155,21 @@ CREATE UNIQUE INDEX idx_api_keys_provider
 
 #### 4.2.4 `sessions`
 
-Represents a single rewrite flow (temp prompt + content + result + optional clipboard context).
+Represents a single rewrite flow (preset + provider/model + optional temporary prompt/context).
 
 ```sql
 CREATE TABLE sessions (
-    id                TEXT PRIMARY KEY,      -- UUID
-    user_id           TEXT NOT NULL,
-    preset_id         TEXT NOT NULL,         -- FK to user_prompt_presets(id)
-    temporary_prompt  TEXT,                  -- optional, derived from voice or text
-    context_text      TEXT,                  -- clipboard context if provided
-    device            TEXT,                  -- "macos", "ios", "windows", etc.
-    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id                TEXT PRIMARY KEY,
+    preset_id         TEXT NOT NULL REFERENCES user_prompt_presets(id) ON DELETE CASCADE,
+    provider_name     TEXT NOT NULL,
+    model             TEXT NOT NULL,
+    temporary_prompt  TEXT,
+    context_text      TEXT,
+    clipboard_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    system_prompt_id  TEXT NOT NULL REFERENCES system_prompts(id),
+    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE INDEX idx_sessions_user_id
-    ON sessions (user_id);
-
-CREATE INDEX idx_sessions_preset_id
-    ON sessions (preset_id);
 ```
 
 ---
@@ -201,158 +198,41 @@ CREATE INDEX idx_messages_session_id
 
 ### 5.1 HTTP API Layer
 
-The HTTP layer defines routes, parses requests, and returns responses. It delegates business logic to services.
+All HTTP routes live under `/api/v1` (plus `/healthz`). Gin handles middleware, body parsing, and error formatting; handlers defer business logic to services.
 
-Key endpoints (simplified):
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/v1/system-prompt` | Read the active system prompt. |
+| `PUT /api/v1/system-prompt` | Update system prompt (`{ "prompt_text": "..." }`). |
+| `GET /api/v1/presets` | List presets. |
+| `POST /api/v1/presets` | Create preset (`name`, `prompt_text`). |
+| `PUT /api/v1/presets/:id` | Update preset. |
+| `DELETE /api/v1/presets/:id` | Delete preset. |
+| `GET /api/v1/api-keys` | List provider key metadata (provider name + timestamps). |
+| `PUT /api/v1/api-keys/:provider` | Store/update provider API key (`{ "api_key": "..." }`). |
+| `DELETE /api/v1/api-keys/:provider` | Remove stored provider key. |
+| `POST /api/v1/transcriptions` | Accepts `multipart/form-data` with `audio`, returns transcription text. |
+| `GET /api/v1/sessions` | List recent sessions (`?limit=`). |
+| `POST /api/v1/sessions` | Create new session (`preset_id`, `provider_name`, `model`, optional `temporary_prompt`, `context_text`, `clipboard_enabled`). |
+| `GET /api/v1/sessions/:id` | Fetch session details + messages. |
+| `POST /api/v1/sessions/:id/messages` | Attach a content message (`raw_text`). |
+| `POST /api/v1/sessions/:id/rewrite` | Trigger rewrite for a content message (`{ "message_id": "..." }`). |
 
-#### Prompt Presets
-
-- `GET /v1/prompts/presets`
-  - Returns list of presets for the (local) user.
-
-- `POST /v1/prompts/presets`
-  - Creates a new preset.
-  - Body: `{ "name": "...", "prompt_text": "..." }`
-
-- `PUT /v1/prompts/presets/{id}`
-  - Updates name or prompt text.
-
-- `DELETE /v1/prompts/presets/{id}`
-  - Deletes the preset.
-
-#### System Prompt
-
-- `GET /v1/prompts/system`
-  - Returns the currently active system prompt.
-
-- `PUT /v1/prompts/system`
-  - Updates the active system prompt text.
-
-#### API Keys
-
-- `GET /v1/keys`
-  - Returns list of providers and metadata (no raw keys).
-
-- `POST /v1/keys`
-  - Adds or updates a key for a provider.
-  - Body: `{ "provider": "openai", "display_name": "...", "api_key": "..." }`
-
-- `DELETE /v1/keys/{id}`
-  - Deletes a key.
-
-#### Sessions
-
-- `POST /v1/sessions`
-  - Creates a session.
-  - Body:
-    ```json
-    {
-      "preset_id": "preset-uuid",
-      "device": "macos",
-      "context_text": "optional clipboard content"
-    }
-    ```
-  - Returns: `{ "session_id": "..." }`
-
-- `POST /v1/sessions/{id}/temporary_prompt`
-  - Uploads audio or text for temporary prompt.
-  - `multipart/form-data` with:
-    - `audio`: file (optional)
-    - `text`: string (optional; used when frontend already transcribed)
-  - Backend transcribes audio if provided and stores the result in `temporary_prompt`.
-
-- `POST /v1/sessions/{id}/content`
-  - Uploads audio for main content and triggers a full rewrite.
-  - `multipart/form-data` with:
-    - `audio`: file (required)
-  - Backend:
-    1. Transcribes audio to `raw_text`.
-    2. Reads system prompt.
-    3. Reads preset prompt using `preset_id`.
-    4. Reads `temporary_prompt` and `context_text` from session.
-    5. Composes final prompt.
-    6. Selects provider/model (from request or default).
-    7. Calls LLM.
-    8. Stores:
-       - content message
-       - rewrite message
-    9. Returns:
-       ```json
-       {
-         "raw_text": "...",
-         "transformed_text": "..."
-       }
-       ```
-
-- `GET /v1/sessions/{id}`
-  - Returns full session details and messages.
+Handlers are intentionally thin: validate payloads, translate errors, and call into the service layer.
 
 ---
 
 ### 5.2 Service Layer
 
-Core services:
+Core services and responsibilities:
 
-#### `PromptService`
+- **PromptService** – ensures a default system prompt exists, manages CRUD for presets, and exposes helpers for fetching prompts by ID.
+- **APIKeyService** – encrypts/decrypts provider API keys using AES-GCM and persists metadata in `api_keys`.
+- **SessionService** – creates sessions, stores content/rewrite messages, orchestrates prompt composition, and delegates rewrite calls to provider clients.
+- **TranscriptionService** – pluggable STT client (stubbed for now, ready for Whisper/OpenAI).
+- **Provider Registry** – map of provider name → `LLMClient` implementation (Echo client today; replace with OpenAI/Gemini adapters later).
 
-- Responsibilities:
-  - Fetch active system prompt.
-  - Fetch preset prompt by `preset_id`.
-  - Build final prompt string given:
-    - system prompt
-    - preset prompt
-    - temporary prompt
-    - clipboard context (if present)
-
-#### `TranscriptionService`
-
-- `TranscribeAudio(audioBytes []byte, mimeType string) (string, error)`
-- Uses Whisper (OpenAI) or another configurable provider.
-- Handles API calls and error mapping.
-
-#### `LLMService`
-
-- Top-level interface for rewriting text via various providers.
-- Interface:
-
-```go
-type LLMService interface {
-    Rewrite(ctx context.Context, opts RewriteOptions) (string, error)
-}
-
-type RewriteOptions struct {
-    Provider      string
-    Model         string
-    ApiKey        string
-    Prompt        string  // fully composed prompt
-    Content       string  // user content
-}
-```
-
-- Implementation uses provider-specific adapters.
-
-#### Provider Adapters
-
-Each provider implements:
-
-```go
-type LLMProvider interface {
-    Rewrite(ctx context.Context, apiKey string, model string, prompt string, content string) (string, error)
-}
-```
-
-Providers:
-
-- `OpenAIProvider`
-- `GeminiProvider`
-- (others later)
-
-#### `APIKeyService`
-
-- Responsibilities:
-  - Store and retrieve encrypted API keys.
-  - Decrypt keys when needed.
-  - Enforce one key per provider for MVP.
+These services encapsulate persistence and provider logic, allowing the HTTP layer to stay declarative and simplifying future swaps (e.g., adding a new provider or database).
 
 ---
 

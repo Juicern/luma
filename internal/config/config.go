@@ -21,7 +21,9 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Path string `yaml:"path"`
+	Driver string `yaml:"driver"`
+	Path   string `yaml:"path"`
+	DSN    string `yaml:"dsn"`
 }
 
 type ProviderConfig struct {
@@ -40,7 +42,9 @@ type fileConfig struct {
 		ShutdownTimeout int    `yaml:"shutdown_timeout"`
 	} `yaml:"server"`
 	Database struct {
-		Path string `yaml:"path"`
+		Driver string `yaml:"driver"`
+		Path   string `yaml:"path"`
+		DSN    string `yaml:"dsn"`
 	} `yaml:"database"`
 	Providers []ProviderConfig `yaml:"providers"`
 	Security  SecurityConfig   `yaml:"security"`
@@ -52,7 +56,9 @@ func (f fileConfig) toConfig() Config {
 			Port: f.Server.Port,
 		},
 		Database: DatabaseConfig{
-			Path: f.Database.Path,
+			Driver: f.Database.Driver,
+			Path:   f.Database.Path,
+			DSN:    f.Database.DSN,
 		},
 		Providers: f.Providers,
 		Security:  f.Security,
@@ -82,8 +88,14 @@ func Load() Config {
 		}
 	}
 
+	if driver := os.Getenv("LUMA_DB_DRIVER"); driver != "" {
+		cfg.Database.Driver = driver
+	}
 	if dbPath := os.Getenv("LUMA_DB_PATH"); dbPath != "" {
 		cfg.Database.Path = dbPath
+	}
+	if dsn := os.Getenv("LUMA_DB_DSN"); dsn != "" {
+		cfg.Database.DSN = dsn
 	}
 
 	if key := os.Getenv(cfg.Security.EncryptionKeyEnv); key != "" {
@@ -102,7 +114,8 @@ func defaultConfig() Config {
 			ShutdownTimeout: 10 * time.Second,
 		},
 		Database: DatabaseConfig{
-			Path: "./data/luma.db",
+			Driver: "sqlite",
+			Path:   "./data/luma.db",
 		},
 		Providers: []ProviderConfig{
 			{Name: "openai", BaseURL: "https://api.openai.com/v1"},
@@ -140,8 +153,14 @@ func mergeConfigs(base, override Config) Config {
 	if override.Server.ShutdownTimeout != 0 {
 		base.Server.ShutdownTimeout = override.Server.ShutdownTimeout
 	}
+	if override.Database.Driver != "" {
+		base.Database.Driver = override.Database.Driver
+	}
 	if override.Database.Path != "" {
 		base.Database.Path = override.Database.Path
+	}
+	if override.Database.DSN != "" {
+		base.Database.DSN = override.Database.DSN
 	}
 	if len(override.Providers) > 0 {
 		base.Providers = override.Providers

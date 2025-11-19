@@ -4,29 +4,51 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 
 	"github.com/Juicern/luma/internal/config"
 )
 
-func NewSQLite(cfg config.DatabaseConfig) (*sql.DB, error) {
-	if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
-		return nil, err
+func NewDatabase(cfg config.DatabaseConfig) (*sql.DB, error) {
+	driver := strings.ToLower(cfg.Driver)
+	if driver == "" {
+		driver = "sqlite"
 	}
 
-	db, err := sql.Open("sqlite", cfg.Path)
-	if err != nil {
-		return nil, err
+	switch driver {
+	case "sqlite":
+		if cfg.Path == "" {
+			return nil, errors.New("database path required for sqlite")
+		}
+		if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
+			return nil, err
+		}
+		db, err := sql.Open("sqlite", cfg.Path)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
+			return nil, err
+		}
+		return db, nil
+	case "postgres":
+		if cfg.DSN == "" {
+			return nil, errors.New("database DSN required for postgres")
+		}
+		db, err := sql.Open("pgx", cfg.DSN)
+		if err != nil {
+			return nil, err
+		}
+		return db, nil
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
 	}
-
-	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
-		return nil, err
-	}
-
-	return db, nil
 }
 
 func RunMigrations(ctx context.Context, db *sql.DB) error {
@@ -42,7 +64,7 @@ const schemaSQL = `
 CREATE TABLE IF NOT EXISTS system_prompts (
     id TEXT PRIMARY KEY,
     prompt_text TEXT NOT NULL,
-    active BOOLEAN NOT NULL DEFAULT 1,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -77,7 +99,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     model TEXT NOT NULL,
     temporary_prompt TEXT,
     context_text TEXT,
-    clipboard_enabled BOOLEAN NOT NULL DEFAULT 0,
+    clipboard_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     system_prompt_id TEXT NOT NULL REFERENCES system_prompts(id),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP

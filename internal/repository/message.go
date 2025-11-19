@@ -28,7 +28,7 @@ func (r *MessageRepository) Create(ctx context.Context, msg domain.Message) (dom
 
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO messages (id, session_id, type, raw_text, transformed_text, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, msg.ID, msg.SessionID, msg.Type, msg.RawText, msg.TransformedText, msg.CreatedAt)
 	return msg, err
 }
@@ -36,8 +36,8 @@ func (r *MessageRepository) Create(ctx context.Context, msg domain.Message) (dom
 func (r *MessageRepository) UpdateTransformedText(ctx context.Context, id string, transformed string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE messages
-		SET transformed_text = ?
-		WHERE id = ?
+		SET transformed_text = $1
+		WHERE id = $2
 	`, transformed, id)
 	return err
 }
@@ -47,7 +47,7 @@ func (r *MessageRepository) Get(ctx context.Context, id string) (domain.Message,
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, session_id, type, raw_text, transformed_text, created_at
 		FROM messages
-		WHERE id = ?
+		WHERE id = $1
 	`, id).Scan(&msg.ID, &msg.SessionID, &msg.Type, &msg.RawText, &msg.TransformedText, &msg.CreatedAt)
 	return msg, err
 }
@@ -56,7 +56,7 @@ func (r *MessageRepository) ListBySession(ctx context.Context, sessionID string)
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, session_id, type, raw_text, transformed_text, created_at
 		FROM messages
-		WHERE session_id = ?
+		WHERE session_id = $1
 		ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {

@@ -11,7 +11,7 @@ import (
 func main() {
 	cfg := config.Load()
 
-	db, err := storage.NewSQLite(cfg.Database)
+	db, err := storage.NewDatabase(cfg.Database)
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
