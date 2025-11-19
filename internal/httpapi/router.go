@@ -1,27 +1,38 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/Juicern/luma/internal/app"
+	"github.com/Juicern/luma/internal/service"
 )
 
-func NewRouter(service *app.DocumentService) http.Handler {
+func NewRouter(
+	promptService *service.PromptService,
+	sessionService *service.SessionService,
+	apiKeyService *service.APIKeyService,
+	transcriptionService *service.TranscriptionService,
+	logger *slog.Logger,
+) http.Handler {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
-	documentHandler := NewDocumentHandler(service)
+	api := &API{
+		prompts:       promptService,
+		sessions:      sessionService,
+		keys:          apiKeyService,
+		transcription: transcriptionService,
+		logger:        logger,
+	}
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	api := r.Group("/api/v1")
-	{
-		documentHandler.RegisterRoutes(api.Group("/documents"))
-	}
+	v1 := r.Group("/api/v1")
+	api.registerRoutes(v1)
 
 	return r
 }

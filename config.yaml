@@ -1,0 +1,16 @@
+server:
+  port: 8080
+  shutdown_timeout: 10
+
+database:
+  path: ./data/luma.db
+
+providers:
+  - name: openai
+    base_url: https://api.openai.com/v1
+  - name: gemini
+    base_url: https://generativelanguage.googleapis.com/v1beta
+
+security:
+  encryption_key_env: LUMA_SECRET_KEY
+
