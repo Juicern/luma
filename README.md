@@ -16,7 +16,7 @@ Settings come from `config.yaml` (see committed example) and environment variabl
 | --- | --- | --- |
 | `HTTP_PORT` | `8080` | Server port |
 | `HTTP_SHUTDOWN_TIMEOUT` | `10` | Graceful shutdown timeout in seconds |
-| `LUMA_DB_DSN` | `postgres://postgres:postgres@localhost:5432/luma?sslmode=disable` | Postgres DSN connection string |
+| `LUMA_DB_DSN` | `postgres://postgres:postgres@localhost:5432/luma?sslmode=disable` | Postgres DSN connection string (DB is auto-created if missing) |
 | `LUMA_SECRET_KEY` | _required for API keys_ | Symmetric key for AES-GCM encryption |
 | `LUMA_CONFIG` | `config.yaml` | Custom config file location |
 
@@ -28,7 +28,7 @@ export LUMA_DB_DSN="postgres://postgres:postgres@localhost:5432/luma?sslmode=dis
 go run ./cmd/server
 ```
 
-Migration SQL executes on startup (against Postgres). Default system prompt + preset store are created automatically.
+Migration SQL executes on startup (against Postgres). If the database in `LUMA_DB_DSN` does not exist, the server will attempt to create it (requires sufficient privileges). Default system prompt + preset store are created automatically.
 
 ## Make Targets
 

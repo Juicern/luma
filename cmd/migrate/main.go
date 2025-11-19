@@ -11,13 +11,15 @@ import (
 func main() {
 	cfg := config.Load()
 
-	db, err := storage.NewDatabase(cfg.Database)
+	ctx := context.Background()
+
+	db, err := storage.NewDatabase(ctx, cfg.Database)
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
 	defer db.Close()
 
-	if err := storage.RunMigrations(context.Background(), db); err != nil {
+	if err := storage.RunMigrations(ctx, db); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
 

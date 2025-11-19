@@ -4,16 +4,25 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"net/url"
+	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Juicern/luma/internal/config"
 )
 
-func NewDatabase(cfg config.DatabaseConfig) (*sql.DB, error) {
+func NewDatabase(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error) {
 	if cfg.DSN == "" {
 		return nil, errors.New("database DSN is required")
 	}
+
+	if err := ensureDatabaseExists(ctx, cfg.DSN); err != nil {
+		return nil, err
+	}
+
 	db, err := sql.Open("pgx", cfg.DSN)
 	if err != nil {
 		return nil, err
@@ -84,3 +93,38 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `
+
+func ensureDatabaseExists(ctx context.Context, dsn string) error {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return fmt.Errorf("invalid DSN: %w", err)
+	}
+
+	dbName := strings.TrimPrefix(u.Path, "/")
+	if dbName == "" {
+		return errors.New("DSN must include database name")
+	}
+
+	adminURL := *u
+	adminURL.Path = "/postgres"
+
+	adminDB, err := sql.Open("pgx", adminURL.String())
+	if err != nil {
+		return err
+	}
+	defer adminDB.Close()
+
+	_, err = adminDB.ExecContext(ctx, fmt.Sprintf(`CREATE DATABASE %s`, quoteIdentifier(dbName)))
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P04" { // duplicate_database
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}

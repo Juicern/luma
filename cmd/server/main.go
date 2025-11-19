@@ -22,7 +22,7 @@ func main() {
 
 	ctx := context.Background()
 
-	db, err := storage.NewDatabase(cfg.Database)
+	db, err := storage.NewDatabase(ctx, cfg.Database)
 	if err != nil {
 		logger.Error("failed to open database", slog.Any("error", err))
 		os.Exit(1)
