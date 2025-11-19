@@ -1,24 +1,67 @@
 import Foundation
 import AVFoundation
 import SwiftUI
-
-struct PromptPreset: Identifiable, Hashable {
-    let id: UUID
-    var name: String
-    var details: String
-}
+#if os(macOS)
+import AppKit
+#endif
 
 struct SessionSummary: Identifiable, Hashable {
     let id: UUID
     var title: String
-    var presetName: String
+    var promptPreview: String
     var updatedAt: Date
     var status: String
 }
 
 struct RecordingShortcut: Hashable {
-    var description: String
-    var canShareWithOther: Bool = true
+    var key: String
+    private var modifiersRaw: UInt
+
+    init(key: String, modifiersRaw: UInt = 0) {
+        self.key = key
+        self.modifiersRaw = modifiersRaw
+    }
+
+    #if os(macOS)
+    init(key: String, modifiers: NSEvent.ModifierFlags) {
+        self.key = key
+        self.modifiersRaw = modifiers.rawValue
+    }
+    #endif
+
+    var displayText: String {
+        #if os(macOS)
+        let flags = NSEvent.ModifierFlags(rawValue: modifiersRaw)
+        var parts: [String] = []
+        if flags.contains(.command) { parts.append("⌘") }
+        if flags.contains(.option) { parts.append("⌥") }
+        if flags.contains(.shift) { parts.append("⇧") }
+        if flags.contains(.control) { parts.append("⌃") }
+        #else
+        let parts: [String] = []
+        #endif
+        return (parts + [key.uppercased()]).joined()
+    }
+
+    #if os(macOS)
+    var keyEquivalent: KeyEquivalent {
+        KeyEquivalent(Character(key.lowercased()))
+    }
+
+    var eventModifiers: EventModifiers {
+        var mods: EventModifiers = []
+        let flags = NSEvent.ModifierFlags(rawValue: modifiersRaw)
+        if flags.contains(.command) { mods.insert(.command) }
+        if flags.contains(.option) { mods.insert(.option) }
+        if flags.contains(.shift) { mods.insert(.shift) }
+        if flags.contains(.control) { mods.insert(.control) }
+        return mods
+    }
+    #endif
+
+    #if os(macOS)
+    var nsFlags: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifiersRaw) }
+    #endif
 }
 
 enum RecordingMode {
@@ -31,16 +74,12 @@ final class AppState: ObservableObject {
     @Published var microphoneAuthorized = false
     @Published var apiKey: String = ""
     @Published var apiKeyStatus: String = ""
-    @Published var selectedPreset: PromptPreset?
-    @Published var presets: [PromptPreset] = [
-        .init(id: UUID(), name: "Professional", details: "Tidy business replies"),
-        .init(id: UUID(), name: "Casual", details: "Playful tone"),
-        .init(id: UUID(), name: "CN → EN", details: "Translate to English")
-    ]
+    @Published var userPrompt: String = "Write concise professional replies."
+    @Published var systemPrompt: String = "Rewrite the transcript as an informal message..."
     @Published var sessions: [SessionSummary] = []
     @Published var recordingMode: RecordingMode = .idle
-    @Published var temporaryShortcut = RecordingShortcut(description: "⌘⌥")
-    @Published var mainShortcut = RecordingShortcut(description: "⌥")
+    @Published var temporaryShortcut = RecordingShortcut(key: "R", modifiers: [.command, .option])
+    @Published var mainShortcut = RecordingShortcut(key: "M", modifiers: [.option])
     @Published var allowSharedShortcut = true
     @Published var clipboardEnabled = true
     @Published var contextText: String = ""
@@ -48,7 +87,6 @@ final class AppState: ObservableObject {
     private var recorder = AudioPermissionManager()
 
     func bootstrap() {
-        selectedPreset = presets.first
         sessions = demoSessions()
         requestMicrophonePermission()
     }
@@ -92,7 +130,7 @@ final class AppState: ObservableObject {
             SessionSummary(
                 id: UUID(),
                 title: "Draft #\(index + 1)",
-                presetName: presets[min(index, presets.count - 1)].name,
+                promptPreview: userPrompt,
                 updatedAt: Date().addingTimeInterval(Double(-index) * 3600),
                 status: index == 0 ? "Ready" : "Edited"
             )

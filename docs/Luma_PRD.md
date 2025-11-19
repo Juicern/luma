@@ -206,7 +206,7 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
 
 - The home view shows a checklist/tips column describing:
   1. Adding an API key.
-  2. Choosing/creating a preset prompt.
+  2. Writing/customizing a prompt.
   3. Creating or resuming a session.
   4. Recording temporary prompt vs. main content.
 - Users must be able to paste their provider API key, label it, and send it to the backend.
@@ -214,8 +214,9 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
 
 ### FR13 – Session & Prompt Management UI
 
-- Display the presets returned from the backend; allow selecting one for the next session.
-- Show recent sessions in a table (name, preset, timestamp, status). Selecting one should reveal details/history.
+- Surface both the active **system prompt** (pre-filled from backend defaults) and the **user prompt** text area so the user can edit either before recording.
+- Store any edits locally and (eventually) sync them to the backend when saving presets/system prompt overrides.
+- Show recent sessions in a table (name, prompt preview, timestamp, status). Selecting one should reveal details/history.
 - Provide clipboard-context toggle and optional text field to send manual context snippets.
 
 ### FR14 – Keyboard Shortcuts
@@ -225,6 +226,7 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
   - One to capture the **main content**.
 - Defaults: `⌥` (Option) for main content, `⌘⌥` (Right Command + Option) for temporary prompt—users can customize and even set them to the same combo (press once for prompt, twice for content).
 - UI must record the desired key combination and store it locally; future releases will hook this into a background recorder that starts/stops capture based on the shortcut.
+- The shortcut recorder must capture full modifier combinations (e.g., `⌘L`, `⌥⇧S`) rather than plain characters so power users can tailor their workflow.
 
 ### FR15 – Voice Capture States
 

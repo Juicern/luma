@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct ContentView: View {
     @EnvironmentObject private var state: AppState
@@ -51,7 +54,7 @@ struct MainDashboardView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     APIKeyCard()
                     ShortcutCard()
-                    PresetCard()
+                    PromptCard()
                     RecordingControls()
                     SessionList()
                 }
@@ -63,7 +66,7 @@ struct MainDashboardView: View {
 struct TipsColumn: View {
     private let tips = [
         "1. Paste your API key",
-        "2. Pick a preset",
+        "2. Customize your prompt",
         "3. Create or resume a session",
         "4. Use shortcuts to capture prompt & content",
         "5. Review the rewrite before sending"
@@ -116,11 +119,11 @@ struct ShortcutCard: View {
                 .font(.headline)
             Toggle("Allow prompt/content shortcuts to be the same", isOn: $state.allowSharedShortcut)
             HStack {
-                ShortcutField(title: "Temporary Prompt", shortcut: $state.temporaryShortcut) { newShortcut in
-                    state.updateShortcut(newShortcut, forTemporary: true)
+                ShortcutRecorder(title: "Temporary Prompt", shortcut: $state.temporaryShortcut) { shortcut in
+                    state.updateShortcut(shortcut, forTemporary: true)
                 }
-                ShortcutField(title: "Main Content", shortcut: $state.mainShortcut) { newShortcut in
-                    state.updateShortcut(newShortcut, forTemporary: false)
+                ShortcutRecorder(title: "Main Content", shortcut: $state.mainShortcut) { shortcut in
+                    state.updateShortcut(shortcut, forTemporary: false)
                 }
             }
         }
@@ -129,49 +132,38 @@ struct ShortcutCard: View {
     }
 }
 
-struct ShortcutField: View {
+struct ShortcutRecorder: View {
     var title: String
     @Binding var shortcut: RecordingShortcut
-    var onCommit: (RecordingShortcut) -> Void
-
-    @State private var editingText: String = ""
+    var onChange: (RecordingShortcut) -> Void
 
     var body: some View {
         VStack(alignment: .leading) {
             Text(title)
                 .font(.subheadline)
-            TextField("⌥", text: Binding(
-                get: { editingText.isEmpty ? shortcut.description : editingText },
-                set: { editingText = $0 }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .onSubmit {
-                shortcut.description = editingText.isEmpty ? shortcut.description : editingText
-                onCommit(shortcut)
-                editingText = ""
-            }
+            ShortcutCaptureField(title: title, shortcut: $shortcut, onChange: onChange)
+                .frame(width: 140, height: 32)
         }
     }
 }
 
-struct PresetCard: View {
+struct PromptCard: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Prompt Presets")
+            Text("Prompt Composer")
                 .font(.headline)
-            Picker("Preset", selection: $state.selectedPreset) {
-                ForEach(state.presets) { preset in
-                    Text(preset.name).tag(Optional(preset))
-                }
-            }
-            .pickerStyle(.segmented)
-            if let preset = state.selectedPreset {
-                Text(preset.details)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+            Text("System Prompt")
+                .font(.subheadline)
+            TextEditor(text: $state.systemPrompt)
+                .frame(minHeight: 80)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+            Text("Your Prompt")
+                .font(.subheadline)
+            TextEditor(text: $state.userPrompt)
+                .frame(minHeight: 80)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
             Toggle("Include clipboard context", isOn: $state.clipboardEnabled)
             TextField("Optional context snippet", text: $state.contextText, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
@@ -232,11 +224,10 @@ struct SessionList: View {
                     .font(.headline)
                 Spacer()
                 Button("New Session") {
-                    // placeholder session creation
                     let session = SessionSummary(
                         id: UUID(),
                         title: "Session \(state.sessions.count + 1)",
-                        presetName: state.selectedPreset?.name ?? "Unknown",
+                        promptPreview: state.userPrompt,
                         updatedAt: Date(),
                         status: "Recording"
                     )
@@ -244,12 +235,14 @@ struct SessionList: View {
                 }
             }
             Table(state.sessions) {
-                TableColumn("Title", value: \ .title)
-                TableColumn("Preset", value: \ .presetName)
+                TableColumn("Title", value: \.title)
+                TableColumn("Prompt") { session in
+                    Text(session.promptPreview.prefix(40) + (session.promptPreview.count > 40 ? "…" : ""))
+                }
                 TableColumn("Updated") { session in
                     Text(formatter.string(from: session.updatedAt))
                 }
-                TableColumn("Status", value: \ .status)
+                TableColumn("Status", value: \.status)
             }
             .frame(minHeight: 160)
         }
@@ -261,3 +254,65 @@ struct SessionList: View {
 extension SessionSummary {
     var titleKey: LocalizedStringKey { LocalizedStringKey(title) }
 }
+
+#if os(macOS)
+struct ShortcutCaptureField: NSViewRepresentable {
+    var title: String
+    @Binding var shortcut: RecordingShortcut
+    var onChange: (RecordingShortcut) -> Void
+
+    func makeNSView(context: Context) -> ShortcutTextField {
+        let field = ShortcutTextField()
+        field.placeholderString = "Press shortcut"
+        field.onShortcut = { newShortcut in
+            shortcut = newShortcut
+            onChange(newShortcut)
+        }
+        field.stringValue = shortcut.displayText
+        return field
+    }
+
+    func updateNSView(_ nsView: ShortcutTextField, context: Context) {
+        nsView.stringValue = shortcut.displayText
+    }
+
+    class ShortcutTextField: NSTextField {
+        var onShortcut: ((RecordingShortcut) -> Void)?
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            drawsBackground = true
+            isBezeled = true
+            isEditable = false
+            alignment = .center
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override var acceptsFirstResponder: Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            window?.makeFirstResponder(self)
+        }
+
+        override func keyDown(with event: NSEvent) {
+            guard let chars = event.charactersIgnoringModifiers, let char = chars.uppercased().first else { return }
+            let filtered = event.modifierFlags.intersection([.command, .option, .shift, .control])
+            let shortcut = RecordingShortcut(key: String(char), modifiers: filtered)
+            stringValue = shortcut.displayText
+            onShortcut?(shortcut)
+        }
+    }
+}
+#else
+struct ShortcutCaptureField: View {
+    var title: String
+    @Binding var shortcut: RecordingShortcut
+    var onChange: (RecordingShortcut) -> Void
+    var body: some View {
+        TextField(title, text: .constant(""))
+    }
+}
+#endif

@@ -20,15 +20,15 @@ struct LumaMacApp: App {
         .defaultSize(width: 1000, height: 700)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Record Temporary Prompt (\(state.temporaryShortcut.description))") {
+                Button("Record Temporary Prompt (\(state.temporaryShortcut.displayText))") {
                     state.startRecording(.temporaryPrompt)
                 }
-                .keyboardShortcut(.init(Character("r")), modifiers: [.command, .option])
+                .keyboardShortcut(state.temporaryShortcut.keyEquivalent, modifiers: state.temporaryShortcut.eventModifiers)
 
-                Button("Record Main Content (\(state.mainShortcut.description))") {
+                Button("Record Main Content (\(state.mainShortcut.displayText))") {
                     state.startRecording(.mainContent)
                 }
-                .keyboardShortcut(.init(Character("m")), modifiers: [.option])
+                .keyboardShortcut(state.mainShortcut.keyEquivalent, modifiers: state.mainShortcut.eventModifiers)
             }
         }
     }
