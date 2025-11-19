@@ -76,6 +76,7 @@ Speech-to-Text  LLM Service    Local DB (Postgres)
 
 Tables:
 
+- `users`
 - `system_prompts`
 - `user_prompt_presets`
 - `api_keys`
@@ -88,7 +89,23 @@ MVP assumes a single local user, but schema supports multiple users if needed la
 
 ### 4.2 Tables
 
-#### 4.2.1 `system_prompts`
+#### 4.2.1 `users`
+
+Stores application users.
+
+```sql
+CREATE TABLE users (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+- Backend seeds a default `local-user` for compatibility but new installs should create explicit users.
+
+---
+
+#### 4.2.2 `system_prompts`
 
 Stores the global system prompt text.
 
@@ -108,7 +125,7 @@ Business rules:
 
 ---
 
-#### 4.2.2 `user_prompt_presets`
+#### 4.2.3 `user_prompt_presets`
 
 Stores multiple presets per user (e.g. Professional, Casual, CN → EN).
 
@@ -128,36 +145,37 @@ CREATE INDEX idx_user_prompt_presets_user_id
 
 ---
 
-#### 4.2.3 `api_keys`
+#### 4.2.4 `api_keys`
 
 Stores encrypted API keys for each provider.
 
 ```sql
 CREATE TABLE api_keys (
-    id           TEXT PRIMARY KEY,        -- UUID
-    provider     TEXT NOT NULL,           -- "openai", "gemini", "anthropic", etc.
-    display_name TEXT NOT NULL,           -- user-readable label
-    encrypted_key TEXT NOT NULL,          -- encrypted API key string
-    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider_name TEXT NOT NULL,
+    encrypted_key TEXT NOT NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX idx_api_keys_provider
-    ON api_keys (provider);
+CREATE UNIQUE INDEX idx_api_keys_user_provider
+    ON api_keys (user_id, provider_name);
 ```
 
-- For MVP, assume one key per provider.
+- Keys are unique per (user, provider).
 - `encrypted_key` is stored using local symmetric encryption (see Security section).
 
 ---
 
-#### 4.2.4 `sessions`
+#### 4.2.5 `sessions`
 
 Represents a single rewrite flow (preset + provider/model + optional temporary prompt/context).
 
 ```sql
 CREATE TABLE sessions (
     id                TEXT PRIMARY KEY,
+    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     preset_id         TEXT NOT NULL REFERENCES user_prompt_presets(id) ON DELETE CASCADE,
     provider_name     TEXT NOT NULL,
     model             TEXT NOT NULL,
@@ -172,7 +190,7 @@ CREATE TABLE sessions (
 
 ---
 
-#### 4.2.5 `messages`
+#### 4.2.6 `messages`
 
 Stores both original content and rewritten result.
 
@@ -200,18 +218,20 @@ All HTTP routes live under `/api/v1` (plus `/healthz`). Gin handles middleware, 
 
 | Endpoint | Purpose |
 | --- | --- |
+| `GET /api/v1/users` | List users (MVP UI might just call once). |
+| `POST /api/v1/users` | Create a user (`name`). |
 | `GET /api/v1/system-prompt` | Read the active system prompt. |
 | `PUT /api/v1/system-prompt` | Update system prompt (`{ "prompt_text": "..." }`). |
 | `GET /api/v1/presets` | List presets. |
 | `POST /api/v1/presets` | Create preset (`name`, `prompt_text`). |
 | `PUT /api/v1/presets/:id` | Update preset. |
 | `DELETE /api/v1/presets/:id` | Delete preset. |
-| `GET /api/v1/api-keys` | List provider key metadata (provider name + timestamps). |
-| `PUT /api/v1/api-keys/:provider` | Store/update provider API key (`{ "api_key": "..." }`). |
-| `DELETE /api/v1/api-keys/:provider` | Remove stored provider key. |
+| `GET /api/v1/api-keys?user_id=...` | List provider key metadata for a user. |
+| `PUT /api/v1/api-keys/:provider` | Store/update provider API key (`{ "user_id": "...", "api_key": "..." }`). |
+| `DELETE /api/v1/api-keys/:provider?user_id=...` | Remove stored provider key for a user. |
 | `POST /api/v1/transcriptions` | Accepts `multipart/form-data` with `audio`, returns transcription text. |
-| `GET /api/v1/sessions` | List recent sessions (`?limit=`). |
-| `POST /api/v1/sessions` | Create new session (`preset_id`, `provider_name`, `model`, optional `temporary_prompt`, `context_text`, `clipboard_enabled`). |
+| `GET /api/v1/sessions?user_id=...` | List recent sessions for a user (`?limit=`). |
+| `POST /api/v1/sessions` | Create new session (`user_id`, `preset_id`, `provider_name`, `model`, optional `temporary_prompt`, `context_text`, `clipboard_enabled`). |
 | `GET /api/v1/sessions/:id` | Fetch session details + messages. |
 | `POST /api/v1/sessions/:id/messages` | Attach a content message (`raw_text`). |
 | `POST /api/v1/sessions/:id/rewrite` | Trigger rewrite for a content message (`{ "message_id": "..." }`). |
@@ -225,6 +245,7 @@ Handlers are intentionally thin: validate payloads, translate errors, and call i
 Core services and responsibilities:
 
 - **PromptService** – ensures a default system prompt exists, manages CRUD for presets, and exposes helpers for fetching prompts by ID.
+- **UserService** – CRUD for users (MVP exposes create/list).
 - **APIKeyService** – encrypts/decrypts provider API keys using AES-GCM and persists metadata in `api_keys`.
 - **SessionService** – creates sessions, stores content/rewrite messages, orchestrates prompt composition, and delegates rewrite calls to provider clients.
 - **TranscriptionService** – pluggable STT client (stubbed for now, ready for Whisper/OpenAI).

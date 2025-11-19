@@ -40,6 +40,16 @@ func RunMigrations(ctx context.Context, db *sql.DB) error {
 }
 
 const schemaSQL = `
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO users (id, name, created_at)
+VALUES ('local-user', 'Local User', CURRENT_TIMESTAMP)
+ON CONFLICT (id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS system_prompts (
     id TEXT PRIMARY KEY,
     prompt_text TEXT NOT NULL,
@@ -62,17 +72,25 @@ CREATE INDEX IF NOT EXISTS idx_user_prompt_presets_user_id
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider_name TEXT NOT NULL,
     encrypted_key TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_provider
-    ON api_keys (provider_name);
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS user_id TEXT;
+UPDATE api_keys SET user_id = 'local-user' WHERE user_id IS NULL;
+ALTER TABLE api_keys ALTER COLUMN user_id SET NOT NULL;
+ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS api_keys_user_fk;
+ALTER TABLE api_keys ADD CONSTRAINT api_keys_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+DROP INDEX IF EXISTS idx_api_keys_provider;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_provider
+    ON api_keys (user_id, provider_name);
 
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     preset_id TEXT NOT NULL REFERENCES user_prompt_presets(id) ON DELETE CASCADE,
     provider_name TEXT NOT NULL,
     model TEXT NOT NULL,
@@ -83,6 +101,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id TEXT;
+UPDATE sessions SET user_id = 'local-user' WHERE user_id IS NULL;
+ALTER TABLE sessions ALTER COLUMN user_id SET NOT NULL;
+ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_user_fk;
+ALTER TABLE sessions ADD CONSTRAINT sessions_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,

@@ -14,6 +14,7 @@ import (
 )
 
 type API struct {
+	users         *service.UserService
 	prompts       *service.PromptService
 	sessions      *service.SessionService
 	keys          *service.APIKeyService
@@ -22,6 +23,9 @@ type API struct {
 }
 
 func (api *API) registerRoutes(r *gin.RouterGroup) {
+	r.GET("/users", api.listUsers)
+	r.POST("/users", api.createUser)
+
 	r.GET("/system-prompt", api.getSystemPrompt)
 	r.PUT("/system-prompt", api.updateSystemPrompt)
 
@@ -124,7 +128,11 @@ func (api *API) deletePreset(c *gin.Context) {
 }
 
 func (api *API) listAPIKeys(c *gin.Context) {
-	keys, err := api.keys.List(c.Request.Context())
+	userID, ok := api.requireUserQuery(c)
+	if !ok {
+		return
+	}
+	keys, err := api.keys.List(c.Request.Context(), userID)
 	if err != nil {
 		api.handleError(c, err)
 		return
@@ -145,13 +153,18 @@ func (api *API) listAPIKeys(c *gin.Context) {
 
 func (api *API) upsertAPIKey(c *gin.Context) {
 	var payload struct {
+		UserID string `json:"user_id" binding:"required"`
 		APIKey string `json:"api_key" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		api.validationError(c, "api_key is required")
+		api.validationError(c, "user_id and api_key are required")
 		return
 	}
-	if _, err := api.keys.Upsert(c.Request.Context(), c.Param("provider"), payload.APIKey); err != nil {
+	if _, err := api.users.Get(c.Request.Context(), payload.UserID); err != nil {
+		api.handleError(c, err)
+		return
+	}
+	if _, err := api.keys.Upsert(c.Request.Context(), payload.UserID, c.Param("provider"), payload.APIKey); err != nil {
 		api.handleError(c, err)
 		return
 	}
@@ -159,15 +172,45 @@ func (api *API) upsertAPIKey(c *gin.Context) {
 }
 
 func (api *API) deleteAPIKey(c *gin.Context) {
-	if err := api.keys.Delete(c.Request.Context(), c.Param("provider")); err != nil {
+	userID, ok := api.requireUserQuery(c)
+	if !ok {
+		return
+	}
+	if err := api.keys.Delete(c.Request.Context(), userID, c.Param("provider")); err != nil {
 		api.handleError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
+func (api *API) listUsers(c *gin.Context) {
+	users, err := api.users.List(c.Request.Context())
+	if err != nil {
+		api.handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, users)
+}
+
+func (api *API) createUser(c *gin.Context) {
+	var payload struct {
+		Name string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		api.validationError(c, "name is required")
+		return
+	}
+	user, err := api.users.Create(c.Request.Context(), payload.Name)
+	if err != nil {
+		api.handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, user)
+}
+
 func (api *API) createSession(c *gin.Context) {
 	var payload struct {
+		UserID           string  `json:"user_id" binding:"required"`
 		PresetID         string  `json:"preset_id" binding:"required"`
 		ProviderName     string  `json:"provider_name" binding:"required"`
 		Model            string  `json:"model" binding:"required"`
@@ -176,10 +219,15 @@ func (api *API) createSession(c *gin.Context) {
 		ClipboardEnabled bool    `json:"clipboard_enabled"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		api.validationError(c, "preset_id, provider_name, and model are required")
+		api.validationError(c, "user_id, preset_id, provider_name, and model are required")
+		return
+	}
+	if _, err := api.users.Get(c.Request.Context(), payload.UserID); err != nil {
+		api.handleError(c, err)
 		return
 	}
 	session, err := api.sessions.CreateSession(c.Request.Context(), service.SessionInput{
+		UserID:           payload.UserID,
 		PresetID:         payload.PresetID,
 		ProviderName:     payload.ProviderName,
 		Model:            payload.Model,
@@ -195,13 +243,17 @@ func (api *API) createSession(c *gin.Context) {
 }
 
 func (api *API) listSessions(c *gin.Context) {
+	userID, ok := api.requireUserQuery(c)
+	if !ok {
+		return
+	}
 	limit := 25
 	if raw := c.Query("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
 			limit = parsed
 		}
 	}
-	sessions, err := api.sessions.ListSessions(c.Request.Context(), limit)
+	sessions, err := api.sessions.ListSessions(c.Request.Context(), userID, limit)
 	if err != nil {
 		api.handleError(c, err)
 		return
@@ -248,6 +300,19 @@ func (api *API) rewriteMessage(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, msg)
+}
+
+func (api *API) requireUserQuery(c *gin.Context) (string, bool) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		api.validationError(c, "user_id query parameter is required")
+		return "", false
+	}
+	if _, err := api.users.Get(c.Request.Context(), userID); err != nil {
+		api.handleError(c, err)
+		return "", false
+	}
+	return userID, true
 }
 
 func (api *API) createTranscription(c *gin.Context) {

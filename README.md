@@ -48,6 +48,8 @@ All responses are JSON. Errors follow `{ "error": "<code>" }`.
 
 | Endpoint | Description |
 | --- | --- |
+| `GET /api/v1/users` | List users |
+| `POST /api/v1/users` | Create user (`name`) |
 | `GET /healthz` | Health probe |
 | `GET /api/v1/system-prompt` | Read active system prompt |
 | `PUT /api/v1/system-prompt` | Update system prompt (`{ "prompt_text": "..." }`) |
@@ -55,12 +57,12 @@ All responses are JSON. Errors follow `{ "error": "<code>" }`.
 | `POST /api/v1/presets` | Create preset (`name`, `prompt_text`) |
 | `PUT /api/v1/presets/:id` | Update preset |
 | `DELETE /api/v1/presets/:id` | Remove preset |
-| `GET /api/v1/api-keys` | List stored providers + timestamps |
-| `PUT /api/v1/api-keys/:provider` | Store/update encrypted API key (`{ "api_key": "..." }`) |
-| `DELETE /api/v1/api-keys/:provider` | Remove provider key |
+| `GET /api/v1/api-keys?user_id=...` | List provider keys for a user |
+| `PUT /api/v1/api-keys/:provider` | Store/update key (`{ "user_id": "...", "api_key": "..." }`) |
+| `DELETE /api/v1/api-keys/:provider?user_id=...` | Remove provider key for a user |
 | `POST /api/v1/transcriptions` | Simulated STT endpoint, accepts `multipart/form-data` (`audio` file) |
-| `GET /api/v1/sessions` | List sessions (pass `?limit=50` etc.) |
-| `POST /api/v1/sessions` | Create session (`preset_id`, `provider_name`, `model`, optional `temporary_prompt`, `context_text`, `clipboard_enabled`) |
+| `GET /api/v1/sessions?user_id=...` | List sessions for a user (`?limit=50`) |
+| `POST /api/v1/sessions` | Create session (`user_id`, `preset_id`, `provider_name`, `model`, optional `temporary_prompt`, `context_text`, `clipboard_enabled`) |
 | `GET /api/v1/sessions/:id` | Fetch session details + messages |
 | `POST /api/v1/sessions/:id/messages` | Add a content message (`raw_text`) |
 | `POST /api/v1/sessions/:id/rewrite` | Trigger rewrite for a content message (`message_id`) |
@@ -68,12 +70,18 @@ All responses are JSON. Errors follow `{ "error": "<code>" }`.
 ### Example Flow
 
 ```bash
+# 0) create a user
+curl -X POST http://localhost:8080/api/v1/users \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Local User"}'
+# -> grab the "id" (e.g., 2fc4...)
+
 # store a fake OpenAI key (required before rewrites)
 curl -X PUT http://localhost:8080/api/v1/api-keys/openai \
   -H "Content-Type: application/json" \
-  -d '{"api_key": "sk-local-dev"}'
+  -d '{"user_id":"2fc4...","api_key":"sk-local-dev"}'
 
-# create a preset
+# create a preset (still local single-user)
 curl -X POST http://localhost:8080/api/v1/presets \
   -H "Content-Type: application/json" \
   -d '{"name":"Professional","prompt_text":"Write concise professional responses."}'
@@ -81,7 +89,14 @@ curl -X POST http://localhost:8080/api/v1/presets \
 # start a session
 curl -X POST http://localhost:8080/api/v1/sessions \
   -H "Content-Type: application/json" \
-  -d '{"preset_id":"<preset-id>","provider_name":"openai","model":"gpt-4o","context_text":"Reply to the thread below.","clipboard_enabled":true}'
+  -d '{
+    "user_id":"2fc4...",
+    "preset_id":"<preset-id>",
+    "provider_name":"openai",
+    "model":"gpt-4o",
+    "context_text":"Reply to the thread below.",
+    "clipboard_enabled":true
+  }'
 
 # add content message and request rewrite
 curl -X POST http://localhost:8080/api/v1/sessions/<session-id>/messages \

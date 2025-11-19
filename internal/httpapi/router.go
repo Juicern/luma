@@ -10,6 +10,7 @@ import (
 )
 
 func NewRouter(
+	userService *service.UserService,
 	promptService *service.PromptService,
 	sessionService *service.SessionService,
 	apiKeyService *service.APIKeyService,
@@ -20,6 +21,7 @@ func NewRouter(
 	r.Use(gin.Logger(), gin.Recovery())
 
 	api := &API{
+		users:         userService,
 		prompts:       promptService,
 		sessions:      sessionService,
 		keys:          apiKeyService,

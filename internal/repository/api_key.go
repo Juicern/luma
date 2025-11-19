@@ -18,12 +18,13 @@ func NewAPIKeyRepository(db *sql.DB) *APIKeyRepository {
 	return &APIKeyRepository{db: db}
 }
 
-func (r *APIKeyRepository) List(ctx context.Context) ([]domain.APIKey, error) {
+func (r *APIKeyRepository) List(ctx context.Context, userID string) ([]domain.APIKey, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, provider_name, encrypted_key, created_at, updated_at
+		SELECT id, user_id, provider_name, encrypted_key, created_at, updated_at
 		FROM api_keys
+		WHERE user_id = $1
 		ORDER BY updated_at DESC
-	`)
+	`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +33,7 @@ func (r *APIKeyRepository) List(ctx context.Context) ([]domain.APIKey, error) {
 	var keys []domain.APIKey
 	for rows.Next() {
 		var key domain.APIKey
-		if err := rows.Scan(&key.ID, &key.ProviderName, &key.EncryptedKey, &key.CreatedAt, &key.UpdatedAt); err != nil {
+		if err := rows.Scan(&key.ID, &key.UserID, &key.ProviderName, &key.EncryptedKey, &key.CreatedAt, &key.UpdatedAt); err != nil {
 			return nil, err
 		}
 		keys = append(keys, key)
@@ -40,27 +41,28 @@ func (r *APIKeyRepository) List(ctx context.Context) ([]domain.APIKey, error) {
 	return keys, rows.Err()
 }
 
-func (r *APIKeyRepository) Upsert(ctx context.Context, provider, encrypted string) (domain.APIKey, error) {
+func (r *APIKeyRepository) Upsert(ctx context.Context, userID, provider, encrypted string) (domain.APIKey, error) {
 	now := time.Now().UTC()
 	var existing domain.APIKey
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, provider_name, encrypted_key, created_at, updated_at
+		SELECT id, user_id, provider_name, encrypted_key, created_at, updated_at
 		FROM api_keys
-		WHERE provider_name = $1
-	`, provider).Scan(&existing.ID, &existing.ProviderName, &existing.EncryptedKey, &existing.CreatedAt, &existing.UpdatedAt)
+		WHERE provider_name = $1 AND user_id = $2
+	`, provider, userID).Scan(&existing.ID, &existing.UserID, &existing.ProviderName, &existing.EncryptedKey, &existing.CreatedAt, &existing.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		existing = domain.APIKey{
 			ID:           uuid.NewString(),
+			UserID:       userID,
 			ProviderName: provider,
 			EncryptedKey: encrypted,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
 		_, err := r.db.ExecContext(ctx, `
-			INSERT INTO api_keys (id, provider_name, encrypted_key, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5)
-		`, existing.ID, existing.ProviderName, existing.EncryptedKey, existing.CreatedAt, existing.UpdatedAt)
+			INSERT INTO api_keys (id, user_id, provider_name, encrypted_key, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, existing.ID, existing.UserID, existing.ProviderName, existing.EncryptedKey, existing.CreatedAt, existing.UpdatedAt)
 		return existing, err
 	}
 
@@ -79,17 +81,17 @@ func (r *APIKeyRepository) Upsert(ctx context.Context, provider, encrypted strin
 	return existing, err
 }
 
-func (r *APIKeyRepository) Delete(ctx context.Context, provider string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM api_keys WHERE provider_name = $1`, provider)
+func (r *APIKeyRepository) Delete(ctx context.Context, userID, provider string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM api_keys WHERE provider_name = $1 AND user_id = $2`, provider, userID)
 	return err
 }
 
-func (r *APIKeyRepository) GetByProvider(ctx context.Context, provider string) (domain.APIKey, error) {
+func (r *APIKeyRepository) GetByProvider(ctx context.Context, userID, provider string) (domain.APIKey, error) {
 	var key domain.APIKey
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, provider_name, encrypted_key, created_at, updated_at
+		SELECT id, user_id, provider_name, encrypted_key, created_at, updated_at
 		FROM api_keys
-		WHERE provider_name = $1
-	`, provider).Scan(&key.ID, &key.ProviderName, &key.EncryptedKey, &key.CreatedAt, &key.UpdatedAt)
+		WHERE provider_name = $1 AND user_id = $2
+	`, provider, userID).Scan(&key.ID, &key.UserID, &key.ProviderName, &key.EncryptedKey, &key.CreatedAt, &key.UpdatedAt)
 	return key, err
 }

@@ -27,24 +27,24 @@ func NewAPIKeyService(repo *repository.APIKeyRepository, encryptionKey string) *
 	}
 }
 
-func (s *APIKeyService) List(ctx context.Context) ([]domain.APIKey, error) {
-	return s.repo.List(ctx)
+func (s *APIKeyService) List(ctx context.Context, userID string) ([]domain.APIKey, error) {
+	return s.repo.List(ctx, userID)
 }
 
-func (s *APIKeyService) Upsert(ctx context.Context, provider, plaintext string) (domain.APIKey, error) {
+func (s *APIKeyService) Upsert(ctx context.Context, userID, provider, plaintext string) (domain.APIKey, error) {
 	encrypted, err := s.encrypt(plaintext)
 	if err != nil {
 		return domain.APIKey{}, err
 	}
-	return s.repo.Upsert(ctx, provider, encrypted)
+	return s.repo.Upsert(ctx, userID, provider, encrypted)
 }
 
-func (s *APIKeyService) Delete(ctx context.Context, provider string) error {
-	return s.repo.Delete(ctx, provider)
+func (s *APIKeyService) Delete(ctx context.Context, userID, provider string) error {
+	return s.repo.Delete(ctx, userID, provider)
 }
 
-func (s *APIKeyService) GetDecrypted(ctx context.Context, provider string) (string, error) {
-	record, err := s.repo.GetByProvider(ctx, provider)
+func (s *APIKeyService) GetDecrypted(ctx context.Context, userID, provider string) (string, error) {
+	record, err := s.repo.GetByProvider(ctx, userID, provider)
 	if err != nil {
 		return "", err
 	}

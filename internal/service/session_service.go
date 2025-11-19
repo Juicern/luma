@@ -10,6 +10,7 @@ import (
 )
 
 type SessionInput struct {
+	UserID           string
 	PresetID         string
 	ProviderName     string
 	Model            string
@@ -61,6 +62,7 @@ func (s *SessionService) CreateSession(ctx context.Context, input SessionInput) 
 	}
 
 	session := domain.Session{
+		UserID:           input.UserID,
 		PresetID:         preset.ID,
 		ProviderName:     input.ProviderName,
 		Model:            input.Model,
@@ -73,8 +75,8 @@ func (s *SessionService) CreateSession(ctx context.Context, input SessionInput) 
 	return s.sessions.Create(ctx, session)
 }
 
-func (s *SessionService) ListSessions(ctx context.Context, limit int) ([]domain.Session, error) {
-	return s.sessions.List(ctx, limit)
+func (s *SessionService) ListSessions(ctx context.Context, userID string, limit int) ([]domain.Session, error) {
+	return s.sessions.List(ctx, userID, limit)
 }
 
 func (s *SessionService) GetSessionDetail(ctx context.Context, id string) (SessionDetail, error) {
@@ -145,7 +147,7 @@ func (s *SessionService) RewriteMessage(ctx context.Context, sessionID, messageI
 		return domain.Message{}, ErrProviderNotSupported
 	}
 
-	apiKey, err := s.apiKeys.GetDecrypted(ctx, session.ProviderName)
+	apiKey, err := s.apiKeys.GetDecrypted(ctx, session.UserID, session.ProviderName)
 	if err != nil {
 		return domain.Message{}, ErrMissingAPIKey
 	}
