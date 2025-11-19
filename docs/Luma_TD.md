@@ -273,7 +273,7 @@ Repositories should be implemented in a way that the DB driver (SQLite vs Postgr
 - Backend **must not** access the OS clipboard directly.
 - The frontend:
   - Reads clipboard content when user enables the **“Use clipboard context”** toggle.
-  - Sends this text to backend as `context_text` when creating a session (`POST /v1/sessions`).
+- Sends this text to backend as `context_text` when creating a session (`POST /api/v1/sessions`).
   - Optionally can update context in future via a dedicated endpoint (not required in MVP).
 
 ### 6.2 Backend Usage of Context
@@ -312,8 +312,9 @@ server:
   port: 8080
 
 database:
-  driver: sqlite
-  dsn: ./data/luma.db
+  driver: sqlite          # or postgres
+  path: ./data/luma.db    # used when driver=sqlite
+  dsn: ""                 # used when driver=postgres
 
 providers:
   - name: openai
