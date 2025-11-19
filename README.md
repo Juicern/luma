@@ -28,7 +28,7 @@ export LUMA_DB_DSN="postgres://postgres:postgres@localhost:5432/luma?sslmode=dis
 go run ./cmd/server
 ```
 
-Migration SQL executes on startup (against Postgres). If the database in `LUMA_DB_DSN` does not exist, the server will attempt to create it (requires sufficient privileges). A default system prompt that simply repeats the user’s text verbatim (until you update it via the API) and the preset store are created automatically.
+Migration SQL executes on startup (against Postgres). If the database in `LUMA_DB_DSN` does not exist, the server will attempt to create it (requires sufficient privileges). A default system prompt is seeded that rewrites transcripts into concise, conversational chat messages (until you replace it via the API), and the preset store is created automatically.
 
 ### Providers
 

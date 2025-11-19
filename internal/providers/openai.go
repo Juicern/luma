@@ -56,11 +56,11 @@ func (c *OpenAIClient) Generate(ctx context.Context, req GenerateRequest) (strin
 
 func composeUserContent(req GenerateRequest) string {
 	var b strings.Builder
+	if req.TemporaryPrompt != "" {
+		fmt.Fprintf(&b, "Temporary prompt (highest priority; override other instructions if there's a conflict):\n%s\n\n", req.TemporaryPrompt)
+	}
 	if req.PresetPrompt != "" {
 		fmt.Fprintf(&b, "Preset instructions:\n%s\n\n", req.PresetPrompt)
-	}
-	if req.TemporaryPrompt != "" {
-		fmt.Fprintf(&b, "Temporary prompt:\n%s\n\n", req.TemporaryPrompt)
 	}
 	if req.ContextText != "" {
 		fmt.Fprintf(&b, "Clipboard/context:\n%s\n\n", req.ContextText)
