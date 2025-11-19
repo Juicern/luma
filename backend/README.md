@@ -1,6 +1,6 @@
 # Luma Backend
 
-Golang backend that fulfills the requirements outlined in `docs/Luma_PRD.md` and `docs/Luma_TD.md`. It manages prompt presets, sessions, clipboard context, encrypted provider keys, and routes rewrite requests to pluggable LLM providers (Mock/Echo provider for now).
+Golang backend that fulfills the requirements outlined in `../docs/Luma_PRD.md` and `../docs/Luma_TD.md`. It manages prompt presets, sessions, clipboard context, encrypted provider keys, and routes rewrite requests to pluggable LLM providers (Mock/Echo provider for now).
 
 ## Prerequisites
 

@@ -1,3 +1,4 @@
 backend/dist/
 backend/.luma.pid
 backend/logs/
+frontend-mac/.build/

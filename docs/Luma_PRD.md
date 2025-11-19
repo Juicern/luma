@@ -194,6 +194,47 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
   - Enabled providers
   - Logging level
 
+### FR11 – macOS Onboarding & Permissions
+
+- When the macOS client launches for the first time it must:
+  - Request microphone access via the system prompt (`AVAudioSession` / `AVCaptureDevice` APIs).
+  - Explain why audio input is required before presenting the system dialog.
+  - Provide a way to re-check permission status and deep-link to System Settings if the user previously denied access.
+- Future shortcuts that listen globally may require Accessibility permission; the UI should surface instructions if/when that becomes necessary.
+
+### FR12 – Frontend Tips & Configuration Hub
+
+- The home view shows a checklist/tips column describing:
+  1. Adding an API key.
+  2. Choosing/creating a preset prompt.
+  3. Creating or resuming a session.
+  4. Recording temporary prompt vs. main content.
+- Users must be able to paste their provider API key, label it, and send it to the backend.
+- Prefill safe defaults and warn if the backend is unreachable.
+
+### FR13 – Session & Prompt Management UI
+
+- Display the presets returned from the backend; allow selecting one for the next session.
+- Show recent sessions in a table (name, preset, timestamp, status). Selecting one should reveal details/history.
+- Provide clipboard-context toggle and optional text field to send manual context snippets.
+
+### FR14 – Keyboard Shortcuts
+
+- Users can configure two shortcuts:
+  - One to capture the **temporary prompt**.
+  - One to capture the **main content**.
+- Defaults: `⌥` (Option) for main content, `⌘⌥` (Right Command + Option) for temporary prompt—users can customize and even set them to the same combo (press once for prompt, twice for content).
+- UI must record the desired key combination and store it locally; future releases will hook this into a background recorder that starts/stops capture based on the shortcut.
+
+### FR15 – Voice Capture States
+
+- When the prompt shortcut fires:
+  - Show a banner indicating “Listening for temporary prompt… tap shortcut again to finish”.
+  - Once stopped, preview the transcript before sending it to the backend.
+- When the main-content shortcut fires:
+  - Similar UI but routed to the session’s primary transcription flow.
+- If the user never records a temporary prompt, the backend will rely on the system/preset prompts (current default rewrites chat-style).
+
 ---
 
 ## 7. Non-Functional Requirements
