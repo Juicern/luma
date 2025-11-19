@@ -111,11 +111,25 @@ struct UserCard: View {
             HStack {
                 Button("Create User") { state.registerUser() }
                     .buttonStyle(.borderedProminent)
+                Button("Refresh Users") { state.loadUsers() }
                 if !state.userStatus.isEmpty {
                     Text(state.userStatus)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+            }
+            if !state.users.isEmpty {
+                Picker("Existing Users", selection: Binding(
+                    get: { state.selectedUser },
+                    set: { newValue in
+                        if let user = newValue { state.select(user: user) }
+                    }
+                )) {
+                    ForEach(state.users) { user in
+                        Text("\(user.name) - \(user.email)").tag(Optional(user))
+                    }
+                }
+                .pickerStyle(.menu)
             }
             if !state.userID.isEmpty {
                 Text("User ID: \(state.userID)")
