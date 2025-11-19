@@ -57,9 +57,7 @@ struct RecordingShortcut: Hashable {
         if flags.contains(.control) { mods.insert(.control) }
         return mods
     }
-    #endif
 
-    #if os(macOS)
     var nsFlags: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifiersRaw) }
     #endif
 }
@@ -72,6 +70,12 @@ enum RecordingMode {
 
 final class AppState: ObservableObject {
     @Published var microphoneAuthorized = false
+    @Published var backendBaseURL = "http://localhost:8080"
+    @Published var userName = ""
+    @Published var userEmail = ""
+    @Published var userPassword = ""
+    @Published var userID: String = ""
+    @Published var userStatus: String = ""
     @Published var apiKey: String = ""
     @Published var apiKeyStatus: String = ""
     @Published var userPrompt: String = "Write concise professional replies."
@@ -83,12 +87,20 @@ final class AppState: ObservableObject {
     @Published var allowSharedShortcut = true
     @Published var clipboardEnabled = true
     @Published var contextText: String = ""
+    @Published var recordingIndicator: String = ""
 
     private var recorder = AudioPermissionManager()
+#if os(macOS)
+    private var localMonitor: Any?
+    private var globalMonitor: Any?
+#endif
 
     func bootstrap() {
         sessions = demoSessions()
         requestMicrophonePermission()
+#if os(macOS)
+        startShortcutMonitors()
+#endif
     }
 
     func requestMicrophonePermission() {
@@ -102,16 +114,44 @@ final class AppState: ObservableObject {
     func startRecording(_ mode: RecordingMode) {
         guard microphoneAuthorized else { return }
         recordingMode = mode
+        switch mode {
+        case .temporaryPrompt:
+            recordingIndicator = "Listening for temporary prompt…"
+        case .mainContent:
+            recordingIndicator = "Listening for main content…"
+        case .idle:
+            recordingIndicator = ""
+        }
         // TODO: hook into actual audio capture and backend streaming.
     }
 
     func stopRecording() {
         recordingMode = .idle
+        recordingIndicator = ""
     }
 
     func saveAPIKey() {
-        // TODO: post to backend. For now we only show optimistic feedback.
-        apiKeyStatus = "API key cached locally at \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
+        guard !userID.isEmpty else {
+            apiKeyStatus = "Create user first"
+            return
+        }
+        guard let url = URL(string: "\(backendBaseURL)/api/v1/api-keys/openai") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload = ["user_id": userID, "api_key": apiKey]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.apiKeyStatus = "Failed: \(error.localizedDescription)"
+                } else if let http = response as? HTTPURLResponse, http.statusCode == 204 {
+                    self?.apiKeyStatus = "API key saved at \(Self.timestamp())"
+                } else {
+                    self?.apiKeyStatus = "Unexpected response"
+                }
+            }
+        }.resume()
     }
 
     func updateShortcut(_ shortcut: RecordingShortcut, forTemporary: Bool) {
@@ -135,6 +175,86 @@ final class AppState: ObservableObject {
                 status: index == 0 ? "Ready" : "Edited"
             )
         }
+    }
+
+    func registerUser() {
+        guard let url = URL(string: "\(backendBaseURL)/api/v1/users") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload = ["name": userName, "email": userEmail, "password": userPassword]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error = error {
+                    self.userStatus = "Failed: \(error.localizedDescription)"
+                    return
+                }
+                guard
+                    let data = data,
+                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                    let id = json["id"] as? String
+                else {
+                    self.userStatus = "Invalid response"
+                    return
+                }
+                self.userID = id
+                self.userStatus = "User created"
+            }
+        }.resume()
+    }
+
+#if os(macOS)
+    func refreshClipboard() {
+        let pasteboard = NSPasteboard.general
+        if let string = pasteboard.string(forType: .string) {
+            contextText = string
+        }
+    }
+
+    private func startShortcutMonitors() {
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.handle(event: event) == true {
+                return nil
+            }
+            return event
+        }
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            _ = self?.handle(event: event)
+        }
+    }
+
+    private func handle(event: NSEvent) -> Bool {
+        guard microphoneAuthorized else { return false }
+        if matches(event, shortcut: temporaryShortcut) {
+            toggle(mode: .temporaryPrompt)
+            return true
+        }
+        if matches(event, shortcut: mainShortcut) {
+            toggle(mode: .mainContent)
+            return true
+        }
+        return false
+    }
+
+    private func toggle(mode: RecordingMode) {
+        if recordingMode == mode {
+            stopRecording()
+        } else {
+            startRecording(mode)
+        }
+    }
+
+    private func matches(_ event: NSEvent, shortcut: RecordingShortcut) -> Bool {
+        guard let chars = event.charactersIgnoringModifiers?.uppercased() else { return false }
+        let flags = event.modifierFlags.intersection([.command, .option, .shift, .control])
+        return chars == shortcut.key.uppercased() && flags == shortcut.nsFlags
+    }
+#endif
+
+    static func timestamp() -> String {
+        DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
     }
 }
 

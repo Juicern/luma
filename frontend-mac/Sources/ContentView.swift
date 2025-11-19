@@ -7,11 +7,17 @@ struct ContentView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        VStack {
-            if !state.microphoneAuthorized {
-                PermissionGateView()
-            } else {
-                MainDashboardView()
+        ZStack {
+            VStack {
+                if !state.microphoneAuthorized {
+                    PermissionGateView()
+                } else {
+                    MainDashboardView()
+                }
+            }
+            if !state.recordingIndicator.isEmpty {
+                RecordingOverlay(message: state.recordingIndicator)
+                    .transition(.opacity)
             }
         }
         .padding()
@@ -52,6 +58,7 @@ struct MainDashboardView: View {
                 .frame(width: 280)
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    UserCard()
                     APIKeyCard()
                     ShortcutCard()
                     PromptCard()
@@ -80,6 +87,40 @@ struct TipsColumn: View {
                 Label(tip, systemImage: "info.circle")
             }
             Spacer()
+        }
+        .padding()
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+struct UserCard: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Account & Backend")
+                .font(.headline)
+            TextField("Backend URL", text: $state.backendBaseURL)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                TextField("Name", text: $state.userName)
+                TextField("Email", text: $state.userEmail)
+                SecureField("Password", text: $state.userPassword)
+            }
+            .textFieldStyle(.roundedBorder)
+            HStack {
+                Button("Create User") { state.registerUser() }
+                    .buttonStyle(.borderedProminent)
+                if !state.userStatus.isEmpty {
+                    Text(state.userStatus)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            if !state.userID.isEmpty {
+                Text("User ID: \(state.userID)")
+                    .font(.caption)
+            }
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
@@ -165,9 +206,13 @@ struct PromptCard: View {
                 .frame(minHeight: 80)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
             Toggle("Include clipboard context", isOn: $state.clipboardEnabled)
-            TextField("Optional context snippet", text: $state.contextText, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(3, reservesSpace: true)
+            HStack(alignment: .top) {
+                TextField("Clipboard snippet", text: $state.contextText, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(3, reservesSpace: true)
+                    .disabled(true)
+                Button("Refresh") { state.refreshClipboard() }
+            }
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
@@ -253,6 +298,29 @@ struct SessionList: View {
 
 extension SessionSummary {
     var titleKey: LocalizedStringKey { LocalizedStringKey(title) }
+}
+
+struct RecordingOverlay: View {
+    var message: String
+
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                    Text(message)
+                        .font(.headline)
+                }
+                .padding()
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                Spacer()
+            }
+            Spacer()
+        }
+    }
 }
 
 #if os(macOS)
