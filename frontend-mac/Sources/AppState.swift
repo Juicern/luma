@@ -13,6 +13,12 @@ struct SessionSummary: Identifiable, Hashable {
     var status: String
 }
 
+struct UserProfile: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+    let email: String
+}
+
 struct RecordingShortcut: Hashable {
     var key: String
     private var modifiersRaw: UInt
@@ -76,6 +82,8 @@ final class AppState: ObservableObject {
     @Published var userPassword = ""
     @Published var userID: String = ""
     @Published var userStatus: String = ""
+    @Published var users: [UserProfile] = []
+    @Published var selectedUser: UserProfile?
     @Published var apiKey: String = ""
     @Published var apiKeyStatus: String = ""
     @Published var userPrompt: String = "Write concise professional replies."
@@ -101,6 +109,7 @@ final class AppState: ObservableObject {
 #if os(macOS)
         startShortcutMonitors()
 #endif
+        loadUsers()
     }
 
     func requestMicrophonePermission() {
@@ -201,8 +210,41 @@ final class AppState: ObservableObject {
                 }
                 self.userID = id
                 self.userStatus = "User created"
+                self.loadUsers()
             }
         }.resume()
+    }
+
+    func loadUsers() {
+        guard let url = URL(string: "\(backendBaseURL)/api/v1/users") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                    if let error = error {
+                        self.userStatus = "Failed fetching users: \(error.localizedDescription)"
+                        return
+                    }
+                    guard
+                        let data = data,
+                        let profiles = try? JSONDecoder().decode([UserProfile].self, from: data)
+                    else {
+                        self.userStatus = "Failed parsing users"
+                        return
+                    }
+                    self.users = profiles
+                    if let current = profiles.first(where: { $0.id == self.userID }) {
+                        self.select(user: current)
+                    }
+            }
+        }.resume()
+    }
+
+    func select(user: UserProfile) {
+        selectedUser = user
+        userID = user.id
+        userName = user.name
+        userEmail = user.email
+        userStatus = "Loaded existing user"
     }
 
 #if os(macOS)
