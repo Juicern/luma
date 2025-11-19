@@ -1,3 +1,3 @@
-dist/
-.luma.pid
-logs/
+backend/dist/
+backend/.luma.pid
+backend/logs/
