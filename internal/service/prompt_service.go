@@ -32,7 +32,7 @@ func (s *PromptService) EnsureDefaultSystemPrompt(ctx context.Context) (domain.S
 		return domain.SystemPrompt{}, err
 	}
 
-	return s.systemRepo.Upsert(ctx, "You are Luma, a helpful writing assistant.")
+	return s.systemRepo.Upsert(ctx, "You are a transparent assistant that repeats the user's text exactly as provided without editing.")
 }
 
 func (s *PromptService) GetSystemPrompt(ctx context.Context) (domain.SystemPrompt, error) {

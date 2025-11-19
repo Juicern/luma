@@ -125,6 +125,7 @@ CREATE TABLE system_prompts (
 Business rules:
 - At most one row has `active = 1`.
 - If multiple exist, backend should select the latest active, or enforce constraints via code.
+- Startup seeds a default prompt that instructs the LLM to repeat the user’s text exactly (so behavior is predictable until the user customizes it).
 
 ---
 
