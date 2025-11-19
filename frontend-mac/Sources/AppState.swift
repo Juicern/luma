@@ -151,6 +151,7 @@ final class AppState: ObservableObject {
 #if os(macOS)
     private let shortcutManager = ShortcutManager.shared
     private var accessibilityTimer: Timer?
+    private var pendingPasteTarget: NSRunningApplication?
 #endif
     private var audioRecorder: AVAudioRecorder?
     private var currentRecordingURL: URL?
@@ -390,6 +391,18 @@ final class AppState: ObservableObject {
             }
         }
     }
+
+    private func captureFrontmostApp() {
+        guard let front = NSWorkspace.shared.frontmostApplication else {
+            pendingPasteTarget = nil
+            return
+        }
+        if front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            pendingPasteTarget = front
+        } else {
+            pendingPasteTarget = nil
+        }
+    }
 #endif
 
     static func timestamp() -> String {
@@ -470,6 +483,7 @@ final class AppState: ObservableObject {
         if recordingMode == mode {
             stopRecording()
         } else {
+            captureFrontmostApp()
             startRecording(mode)
         }
     }
@@ -514,9 +528,8 @@ final class AppState: ObservableObject {
             captureStatus = "Temporary prompt captured."
         case .mainContent:
             latestContentText = text
-            captureStatus = "Main content captured and copied."
-            copyResultToClipboard(text)
-            pasteClipboardToFrontmostApp()
+            captureStatus = "Main content captured."
+            insertTextIntoFrontmostApp(text)
         case .idle:
             captureStatus = "Capture complete."
         }
@@ -531,18 +544,66 @@ final class AppState: ObservableObject {
         contextText = text
     }
 
-    private func pasteClipboardToFrontmostApp() {
-        guard AXIsProcessTrusted(), let source = CGEventSource(stateID: .combinedSessionState) else { return }
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: UInt16(kVK_ANSI_V), keyDown: true)
-        keyDown?.flags = .maskCommand
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: UInt16(kVK_ANSI_V), keyDown: false)
-        keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+    private func insertTextIntoFrontmostApp(_ text: String) {
+        guard AXIsProcessTrusted(), let target = pendingPasteTarget else { return }
+        target.activate(options: [.activateIgnoringOtherApps])
+        pendingPasteTarget = nil
+        usleep(150000)
+
+        let pasteboard = NSPasteboard.general
+        let snapshot = pasteboardSnapshot()
+
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+
+        simulateCommandVPaste()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            self.restorePasteboard(from: snapshot)
+        }
+    }
+
+    private func pasteboardSnapshot() -> [(NSPasteboard.PasteboardType, Data)] {
+        let items = NSPasteboard.general.pasteboardItems ?? []
+        var snapshot: [(NSPasteboard.PasteboardType, Data)] = []
+        for item in items {
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    snapshot.append((type, data))
+                }
+            }
+        }
+        return snapshot
+    }
+
+    private func restorePasteboard(from snapshot: [(NSPasteboard.PasteboardType, Data)]) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard !snapshot.isEmpty else { return }
+        for (type, data) in snapshot {
+            pasteboard.setData(data, forType: type)
+        }
+    }
+
+    private func simulateCommandVPaste() {
+        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+        let cmdKeyCode: UInt16 = 0x37
+        let vKeyCode: UInt16 = UInt16(kVK_ANSI_V)
+        let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: true)
+        let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true)
+        let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false)
+        let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: false)
+        cmdDown?.flags = .maskCommand
+        vDown?.flags = .maskCommand
+        vUp?.flags = .maskCommand
+        cmdDown?.post(tap: .cghidEventTap)
+        vDown?.post(tap: .cghidEventTap)
+        vUp?.post(tap: .cghidEventTap)
+        cmdUp?.post(tap: .cghidEventTap)
     }
 #else
     private func copyResultToClipboard(_ text: String) {}
-    private func pasteClipboardToFrontmostApp() {}
+    private func insertTextIntoFrontmostApp(_ text: String) {}
 #endif
 
 #if os(macOS)
