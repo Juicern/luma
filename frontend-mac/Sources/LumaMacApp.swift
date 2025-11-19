@@ -36,7 +36,7 @@ private extension Bundle {
     static func ensureMainBundleIdentifier(_ identifier: String) {
         let main = Bundle.main
         if main.bundleIdentifier == nil {
-            main.setValue(identifier, forKey: "bundleIdentifier")
+            main.setValue(identifier, forKey: "CFBundleIdentifier")
         }
     }
 }
