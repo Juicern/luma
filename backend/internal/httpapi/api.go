@@ -134,23 +134,12 @@ func (api *API) listAPIKeys(c *gin.Context) {
 	if !ok {
 		return
 	}
-	keys, err := api.keys.List(c.Request.Context(), userID)
+	keys, err := api.keys.ListPlain(c.Request.Context(), userID)
 	if err != nil {
 		api.handleError(c, err)
 		return
 	}
-	type response struct {
-		ProviderName string      `json:"provider_name"`
-		UpdatedAt    interface{} `json:"updated_at"`
-	}
-	resp := make([]response, 0, len(keys))
-	for _, key := range keys {
-		resp = append(resp, response{
-			ProviderName: key.ProviderName,
-			UpdatedAt:    key.UpdatedAt,
-		})
-	}
-	c.JSON(http.StatusOK, resp)
+	c.JSON(http.StatusOK, keys)
 }
 
 func (api *API) upsertAPIKey(c *gin.Context) {

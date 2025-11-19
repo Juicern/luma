@@ -3,6 +3,7 @@ import AVFoundation
 import SwiftUI
 #if os(macOS)
 import AppKit
+import Carbon.HIToolbox
 #endif
 
 struct SessionSummary: Identifiable, Hashable {
@@ -54,8 +55,8 @@ struct RecordingShortcut: Hashable {
         KeyEquivalent(Character(key.lowercased()))
     }
 
-    var eventModifiers: EventModifiers {
-        var mods: EventModifiers = []
+    var eventModifiers: SwiftUI.EventModifiers {
+        var mods: SwiftUI.EventModifiers = []
         let flags = NSEvent.ModifierFlags(rawValue: modifiersRaw)
         if flags.contains(.command) { mods.insert(.command) }
         if flags.contains(.option) { mods.insert(.option) }
@@ -65,6 +66,38 @@ struct RecordingShortcut: Hashable {
     }
 
     var nsFlags: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifiersRaw) }
+
+    var carbonKeyCode: UInt32 {
+        let uppercase = key.uppercased()
+        if let code = RecordingShortcut.keyCodes[uppercase] {
+            return code
+        }
+        return UInt32(kVK_ANSI_A)
+    }
+
+    var carbonFlags: UInt32 {
+        var flags: UInt32 = 0
+        let nsFlags = NSEvent.ModifierFlags(rawValue: modifiersRaw)
+        if nsFlags.contains(.command) { flags |= UInt32(cmdKey) }
+        if nsFlags.contains(.option) { flags |= UInt32(optionKey) }
+        if nsFlags.contains(.shift) { flags |= UInt32(shiftKey) }
+        if nsFlags.contains(.control) { flags |= UInt32(controlKey) }
+        return flags
+    }
+
+    private static let keyCodes: [String: UInt32] = {
+        var dict: [String: UInt32] = [:]
+        for (index, letter) in ("ABCDEFGHIJKLMNOPQRSTUVWXYZ").enumerated() {
+            dict[String(letter)] = UInt32(kVK_ANSI_A + index)
+        }
+        for (index, digit) in ("0123456789").enumerated() {
+            dict[String(digit)] = UInt32(kVK_ANSI_0 + index)
+        }
+        dict[";"] = UInt32(kVK_ANSI_Semicolon)
+        dict[","] = UInt32(kVK_ANSI_Comma)
+        dict["."] = UInt32(kVK_ANSI_Period)
+        return dict
+    }()
     #endif
 }
 
@@ -86,29 +119,36 @@ final class AppState: ObservableObject {
     @Published var selectedUser: UserProfile?
     @Published var apiKey: String = ""
     @Published var apiKeyStatus: String = ""
+    @Published var apiKeys: [String: String] = [:]
+    @Published var providerOptions = ["openai", "gemini"]
+    @Published var selectedProvider: String = "openai" {
+        didSet { updateActiveAPIKey() }
+    }
     @Published var userPrompt: String = "Write concise professional replies."
     @Published var systemPrompt: String = "Rewrite the transcript as an informal message..."
     @Published var sessions: [SessionSummary] = []
     @Published var recordingMode: RecordingMode = .idle
     @Published var temporaryShortcut = RecordingShortcut(key: "R", modifiers: [.command, .option])
     @Published var mainShortcut = RecordingShortcut(key: "M", modifiers: [.option])
-    @Published var allowSharedShortcut = true
+    @Published var allowSharedShortcut = true {
+        didSet { rebindShortcuts() }
+    }
     @Published var clipboardEnabled = true
     @Published var contextText: String = ""
     @Published var recordingIndicator: String = ""
 
     private var recorder = AudioPermissionManager()
 #if os(macOS)
-    private var localMonitor: Any?
-    private var globalMonitor: Any?
+    private let shortcutManager = ShortcutManager.shared
 #endif
+    private var audioRecorder: AVAudioRecorder?
+    private var currentRecordingURL: URL?
+    private var activeRecordingMode: RecordingMode?
 
     func bootstrap() {
         sessions = demoSessions()
         requestMicrophonePermission()
-#if os(macOS)
-        startShortcutMonitors()
-#endif
+        rebindShortcuts()
         loadUsers()
     }
 
@@ -131,12 +171,35 @@ final class AppState: ObservableObject {
         case .idle:
             recordingIndicator = ""
         }
-        // TODO: hook into actual audio capture and backend streaming.
+        activeRecordingMode = mode
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("luma-\(UUID().uuidString).m4a")
+        currentRecordingURL = fileURL
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        do {
+            audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
+            audioRecorder?.record()
+        } catch {
+            recordingIndicator = "Recording failed: \(error.localizedDescription)"
+            currentRecordingURL = nil
+        }
     }
 
     func stopRecording() {
         recordingMode = .idle
         recordingIndicator = ""
+        audioRecorder?.stop()
+        audioRecorder = nil
+        let mode = activeRecordingMode
+        activeRecordingMode = nil
+        if let url = currentRecordingURL, let mode = mode {
+            uploadRecording(fileURL: url, mode: mode)
+        }
+        currentRecordingURL = nil
     }
 
     func saveAPIKey() {
@@ -144,7 +207,7 @@ final class AppState: ObservableObject {
             apiKeyStatus = "Create user first"
             return
         }
-        guard let url = URL(string: "\(backendBaseURL)/api/v1/api-keys/openai") else { return }
+        guard let url = URL(string: "\(backendBaseURL)/api/v1/api-keys/\(selectedProvider)") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -152,12 +215,15 @@ final class AppState: ObservableObject {
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
+                guard let self else { return }
                 if let error = error {
-                    self?.apiKeyStatus = "Failed: \(error.localizedDescription)"
+                    self.apiKeyStatus = "Failed: \(error.localizedDescription)"
                 } else if let http = response as? HTTPURLResponse, http.statusCode == 204 {
-                    self?.apiKeyStatus = "API key saved at \(Self.timestamp())"
+                    self.apiKeyStatus = "API key saved at \(Self.timestamp())"
+                    self.apiKeys[self.selectedProvider] = self.apiKey
+                    self.loadAPIKeys()
                 } else {
-                    self?.apiKeyStatus = "Unexpected response"
+                    self.apiKeyStatus = "Unexpected response"
                 }
             }
         }.resume()
@@ -211,6 +277,7 @@ final class AppState: ObservableObject {
                 self.userID = id
                 self.userStatus = "User created"
                 self.loadUsers()
+                self.loadAPIKeys()
             }
         }.resume()
     }
@@ -245,6 +312,7 @@ final class AppState: ObservableObject {
         userName = user.name
         userEmail = user.email
         userStatus = "Loaded existing user"
+        loadAPIKeys()
     }
 
 #if os(macOS)
@@ -254,49 +322,75 @@ final class AppState: ObservableObject {
             contextText = string
         }
     }
+#endif
 
-    private func startShortcutMonitors() {
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if self?.handle(event: event) == true {
-                return nil
+    static func timestamp() -> String {
+        DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+    }
+
+    private func uploadRecording(fileURL: URL, mode: RecordingMode) {
+        guard !userID.isEmpty, let url = URL(string: "\(backendBaseURL)/api/v1/transcriptions") else { return }
+        guard let audioData = try? Data(contentsOf: fileURL) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        let boundary = "Boundary-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        body.appendString("--\(boundary)\r\n")
+        body.appendString("Content-Disposition: form-data; name=\"user_id\"\r\n\r\n\(userID)\r\n")
+        body.appendString("--\(boundary)\r\n")
+        body.appendString("Content-Disposition: form-data; name=\"mode\"\r\n\r\n\(mode == .temporaryPrompt ? "prompt" : "content")\r\n")
+        body.appendString("--\(boundary)\r\n")
+        body.appendString("Content-Disposition: form-data; name=\"audio\"; filename=\"recording.m4a\"\r\n")
+        body.appendString("Content-Type: audio/m4a\r\n\r\n")
+        body.append(audioData)
+        body.appendString("\r\n--\(boundary)--\r\n")
+        URLSession.shared.uploadTask(with: request, from: body) { _, _, _ in
+            try? FileManager.default.removeItem(at: fileURL)
+        }.resume()
+    }
+
+    private func rebindShortcuts() {
+#if os(macOS)
+        shortcutManager.configure(temporary: temporaryShortcut, main: mainShortcut) { [weak self] mode in
+            DispatchQueue.main.async {
+                self?.handleShortcut(mode: mode)
             }
-            return event
         }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            _ = self?.handle(event: event)
-        }
+#endif
     }
 
-    private func handle(event: NSEvent) -> Bool {
-        guard microphoneAuthorized else { return false }
-        if matches(event, shortcut: temporaryShortcut) {
-            toggle(mode: .temporaryPrompt)
-            return true
-        }
-        if matches(event, shortcut: mainShortcut) {
-            toggle(mode: .mainContent)
-            return true
-        }
-        return false
-    }
-
-    private func toggle(mode: RecordingMode) {
+#if os(macOS)
+    private func handleShortcut(mode: RecordingMode) {
         if recordingMode == mode {
             stopRecording()
         } else {
             startRecording(mode)
         }
     }
-
-    private func matches(_ event: NSEvent, shortcut: RecordingShortcut) -> Bool {
-        guard let chars = event.charactersIgnoringModifiers?.uppercased() else { return false }
-        let flags = event.modifierFlags.intersection([.command, .option, .shift, .control])
-        return chars == shortcut.key.uppercased() && flags == shortcut.nsFlags
-    }
 #endif
 
-    static func timestamp() -> String {
-        DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+    private func updateActiveAPIKey() {
+        apiKey = apiKeys[selectedProvider] ?? ""
+    }
+
+    private func loadAPIKeys() {
+        guard !userID.isEmpty, let url = URL(string: "\(backendBaseURL)/api/v1/api-keys?user_id=\(userID)") else {
+            apiKeys = [:]
+            apiKey = ""
+            return
+        }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let data = data, let decoded = try? JSONDecoder().decode([APIKeyDTO].self, from: data) {
+                    var dict: [String: String] = [:]
+                    decoded.forEach { dict[$0.providerName] = $0.apiKey }
+                    self.apiKeys = dict
+                    self.updateActiveAPIKey()
+                }
+            }
+        }.resume()
     }
 }
 
@@ -304,6 +398,26 @@ final class AudioPermissionManager {
     func requestPermission(completion: @escaping (Bool) -> Void) {
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             completion(granted)
+        }
+    }
+}
+
+struct APIKeyDTO: Decodable {
+    let providerName: String
+    let apiKey: String
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case providerName = "provider_name"
+        case apiKey = "api_key"
+        case updatedAt = "updated_at"
+    }
+}
+
+extension Data {
+    mutating func appendString(_ string: String) {
+        if let data = string.data(using: .utf8) {
+            append(data)
         }
     }
 }

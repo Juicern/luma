@@ -148,6 +148,12 @@ struct APIKeyCard: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Provider API Key")
                 .font(.headline)
+            Picker("Provider", selection: $state.selectedProvider) {
+                ForEach(state.providerOptions, id: \.self) { provider in
+                    Text(provider.capitalized).tag(provider)
+                }
+            }
+            .pickerStyle(.segmented)
             SecureField("sk-...", text: $state.apiKey)
                 .textFieldStyle(.roundedBorder)
             HStack {
@@ -225,7 +231,9 @@ struct PromptCard: View {
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(3, reservesSpace: true)
                     .disabled(true)
+                #if os(macOS)
                 Button("Refresh") { state.refreshClipboard() }
+                #endif
             }
         }
         .padding()

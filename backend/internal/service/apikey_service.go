@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/Juicern/luma/internal/domain"
 	"github.com/Juicern/luma/internal/repository"
@@ -17,6 +18,12 @@ import (
 type APIKeyService struct {
 	repo *repository.APIKeyRepository
 	key  []byte
+}
+
+type PlainAPIKey struct {
+	ProviderName string `json:"provider_name"`
+	APIKey       string `json:"api_key"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 func NewAPIKeyService(repo *repository.APIKeyRepository, encryptionKey string) *APIKeyService {
@@ -29,6 +36,26 @@ func NewAPIKeyService(repo *repository.APIKeyRepository, encryptionKey string) *
 
 func (s *APIKeyService) List(ctx context.Context, userID string) ([]domain.APIKey, error) {
 	return s.repo.List(ctx, userID)
+}
+
+func (s *APIKeyService) ListPlain(ctx context.Context, userID string) ([]PlainAPIKey, error) {
+	records, err := s.repo.List(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	plain := make([]PlainAPIKey, 0, len(records))
+	for _, rec := range records {
+		key, err := s.decrypt(rec.EncryptedKey)
+		if err != nil {
+			return nil, err
+		}
+		plain = append(plain, PlainAPIKey{
+			ProviderName: rec.ProviderName,
+			APIKey:       key,
+			UpdatedAt:    rec.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	return plain, nil
 }
 
 func (s *APIKeyService) Upsert(ctx context.Context, userID, provider, plaintext string) (domain.APIKey, error) {
