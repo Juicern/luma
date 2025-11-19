@@ -1,8 +1,14 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 @main
 struct LumaMacApp: App {
     @StateObject private var state = AppState()
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #endif
 
     var body: some Scene {
         WindowGroup {
@@ -27,3 +33,13 @@ struct LumaMacApp: App {
         }
     }
 }
+
+#if os(macOS)
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.forEach { $0.makeKeyAndOrderFront(nil) }
+    }
+}
+#endif
