@@ -65,3 +65,12 @@ type User struct {
 	PasswordHash string    `db:"password_hash"`
 	CreatedAt    time.Time `db:"created_at"`
 }
+
+type UserSession struct {
+	ID        string    `db:"id"`
+	UserID    string    `db:"user_id"`
+	Token     string    `db:"token"`
+	ExpiresAt time.Time `db:"expires_at"`
+	CreatedAt time.Time `db:"created_at"`
+	LastUsed  time.Time `db:"last_used_at"`
+}

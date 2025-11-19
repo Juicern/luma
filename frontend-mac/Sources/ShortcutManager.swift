@@ -57,22 +57,24 @@ final class ShortcutManager {
         var size = MemoryLayout<EventHotKeyID>.size
         let status = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, size, &size, &hotKeyID)
         guard status == noErr else { return noErr }
-        if hotKeyID.signature == OSType("LUMA".fourCharCodeValue) {
-            if hotKeyID.id == 1 {
-                callback?(.temporaryPrompt)
-            } else if hotKeyID.id == 2 {
-                callback?(.mainContent)
-            }
+        guard hotKeyID.signature == OSType("LUMA".fourCharCodeValue) else { return noErr }
+        switch hotKeyID.id {
+        case 1:
+            callback?(.temporaryPrompt)
+        case 2:
+            callback?(.mainContent)
+        default:
+            break
         }
         return noErr
     }
 }
 
 private extension String {
-    var fourCharCodeValue: Int {
-        var result: Int = 0
+    var fourCharCodeValue: UInt32 {
+        var result: UInt32 = 0
         for scalar in unicodeScalars {
-            result = (result << 8) + Int(scalar.value)
+            result = (result << 8) + UInt32(scalar.value)
         }
         return result
     }

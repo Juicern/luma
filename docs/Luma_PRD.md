@@ -198,6 +198,14 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
 
 - When the macOS client launches for the first time it must:
   - Request microphone access via the system prompt (`AVAudioSession` / `AVCaptureDevice` APIs).
+
+### FR12 – Authentication & Session Persistence
+
+- Users authenticate with their Luma account (email + password) via the backend.
+- Backend issues a long-lived session cookie stored on the device; it is used instead of passing `user_id` in every request.
+- Frontend shows a lightweight login view (email/password fields) until the session is valid, then hides credentials and simply shows the signed-in account info.
+- On launch the app silently checks `/api/v1/session`; if the cookie is still valid the user stays logged in without re-entering credentials.
+- Logging out clears local caches (API keys, selected provider, hotkey state that depends on the user) and revokes the session on the server.
   - Explain why audio input is required before presenting the system dialog.
   - Provide a way to re-check permission status and deep-link to System Settings if the user previously denied access.
 - Future shortcuts that listen globally may require Accessibility permission; the UI should surface instructions if/when that becomes necessary.

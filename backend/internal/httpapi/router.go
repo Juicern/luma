@@ -11,6 +11,7 @@ import (
 
 func NewRouter(
 	userService *service.UserService,
+	authService *service.AuthService,
 	promptService *service.PromptService,
 	sessionService *service.SessionService,
 	apiKeyService *service.APIKeyService,
@@ -22,6 +23,7 @@ func NewRouter(
 
 	api := &API{
 		users:         userService,
+		auth:          authService,
 		prompts:       promptService,
 		sessions:      sessionService,
 		keys:          apiKeyService,

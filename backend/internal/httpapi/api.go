@@ -15,8 +15,11 @@ import (
 	"github.com/Juicern/luma/internal/service"
 )
 
+const sessionCookieName = "luma_session"
+
 type API struct {
 	users         *service.UserService
+	auth          *service.AuthService
 	prompts       *service.PromptService
 	sessions      *service.SessionService
 	keys          *service.APIKeyService
@@ -25,6 +28,10 @@ type API struct {
 }
 
 func (api *API) registerRoutes(r *gin.RouterGroup) {
+	r.POST("/login", api.login)
+	r.POST("/logout", api.logout)
+	r.GET("/session", api.currentSession)
+
 	r.GET("/users", api.listUsers)
 	r.POST("/users", api.createUser)
 
@@ -47,6 +54,45 @@ func (api *API) registerRoutes(r *gin.RouterGroup) {
 	r.GET("/sessions/:id", api.getSession)
 	r.POST("/sessions/:id/messages", api.addContentMessage)
 	r.POST("/sessions/:id/rewrite", api.rewriteMessage)
+}
+
+func (api *API) login(c *gin.Context) {
+	var payload struct {
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		api.validationError(c, "email and password are required")
+		return
+	}
+	user, session, err := api.auth.Login(c.Request.Context(), payload.Email, payload.Password)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_credentials"})
+			return
+		}
+		api.handleError(c, err)
+		return
+	}
+	api.setSessionCookie(c, session.Token, session.ExpiresAt)
+	c.JSON(http.StatusOK, toUserResponse(user))
+}
+
+func (api *API) logout(c *gin.Context) {
+	token, err := api.sessionTokenFromCookie(c)
+	if err == nil && token != "" {
+		_ = api.auth.Logout(c.Request.Context(), token)
+	}
+	api.clearSessionCookie(c)
+	c.Status(http.StatusNoContent)
+}
+
+func (api *API) currentSession(c *gin.Context) {
+	user, ok := api.requireSessionUser(c)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, toUserResponse(user))
 }
 
 func (api *API) getSystemPrompt(c *gin.Context) {
@@ -144,18 +190,18 @@ func (api *API) listAPIKeys(c *gin.Context) {
 
 func (api *API) upsertAPIKey(c *gin.Context) {
 	var payload struct {
-		UserID string `json:"user_id" binding:"required"`
+		UserID string `json:"user_id"`
 		APIKey string `json:"api_key" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		api.validationError(c, "user_id and api_key are required")
+		api.validationError(c, "api_key is required")
 		return
 	}
-	if _, err := api.users.Get(c.Request.Context(), payload.UserID); err != nil {
-		api.handleError(c, err)
+	userID, ok := api.resolveUserID(c, payload.UserID)
+	if !ok {
 		return
 	}
-	if _, err := api.keys.Upsert(c.Request.Context(), payload.UserID, c.Param("provider"), payload.APIKey); err != nil {
+	if _, err := api.keys.Upsert(c.Request.Context(), userID, c.Param("provider"), payload.APIKey); err != nil {
 		api.handleError(c, err)
 		return
 	}
@@ -207,7 +253,7 @@ func (api *API) createUser(c *gin.Context) {
 
 func (api *API) createSession(c *gin.Context) {
 	var payload struct {
-		UserID           string  `json:"user_id" binding:"required"`
+		UserID           string  `json:"user_id"`
 		PresetID         string  `json:"preset_id" binding:"required"`
 		ProviderName     string  `json:"provider_name" binding:"required"`
 		Model            string  `json:"model" binding:"required"`
@@ -216,15 +262,15 @@ func (api *API) createSession(c *gin.Context) {
 		ClipboardEnabled bool    `json:"clipboard_enabled"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		api.validationError(c, "user_id, preset_id, provider_name, and model are required")
+		api.validationError(c, "preset_id, provider_name, and model are required")
 		return
 	}
-	if _, err := api.users.Get(c.Request.Context(), payload.UserID); err != nil {
-		api.handleError(c, err)
+	userID, ok := api.resolveUserID(c, payload.UserID)
+	if !ok {
 		return
 	}
 	session, err := api.sessions.CreateSession(c.Request.Context(), service.SessionInput{
-		UserID:           payload.UserID,
+		UserID:           userID,
 		PresetID:         payload.PresetID,
 		ProviderName:     payload.ProviderName,
 		Model:            payload.Model,
@@ -300,16 +346,7 @@ func (api *API) rewriteMessage(c *gin.Context) {
 }
 
 func (api *API) requireUserQuery(c *gin.Context) (string, bool) {
-	userID := c.Query("user_id")
-	if userID == "" {
-		api.validationError(c, "user_id query parameter is required")
-		return "", false
-	}
-	if _, err := api.users.Get(c.Request.Context(), userID); err != nil {
-		api.handleError(c, err)
-		return "", false
-	}
-	return userID, true
+	return api.resolveUserID(c, c.Query("user_id"))
 }
 
 type userResponse struct {
@@ -335,13 +372,8 @@ func (api *API) createTranscription(c *gin.Context) {
 		return
 	}
 
-	userID := c.PostForm("user_id")
-	if userID == "" {
-		api.validationError(c, "user_id is required")
-		return
-	}
-	if _, err := api.users.Get(c.Request.Context(), userID); err != nil {
-		api.handleError(c, err)
+	userID, ok := api.resolveUserID(c, c.PostForm("user_id"))
+	if !ok {
 		return
 	}
 	provider := c.PostForm("provider")
@@ -386,4 +418,70 @@ func (api *API) handleError(c *gin.Context, err error) {
 
 func (api *API) validationError(c *gin.Context, msg string) {
 	c.JSON(http.StatusBadRequest, gin.H{"error": "validation_error", "message": msg})
+}
+
+func (api *API) sessionTokenFromCookie(c *gin.Context) (string, error) {
+	cookie, err := c.Request.Cookie(sessionCookieName)
+	if err != nil {
+		return "", err
+	}
+	return cookie.Value, nil
+}
+
+func (api *API) setSessionCookie(c *gin.Context, token string, expires time.Time) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  expires,
+	})
+}
+
+func (api *API) clearSessionCookie(c *gin.Context) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+	})
+}
+
+func (api *API) requireSessionUser(c *gin.Context) (domain.User, bool) {
+	token, err := api.sessionTokenFromCookie(c)
+	if err != nil || token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not_authenticated"})
+		return domain.User{}, false
+	}
+	user, _, err := api.auth.Verify(c.Request.Context(), token)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrSessionExpired):
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "session_expired"})
+		case errors.Is(err, service.ErrSessionNotFound):
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "not_authenticated"})
+		default:
+			api.handleError(c, err)
+		}
+		return domain.User{}, false
+	}
+	return user, true
+}
+
+func (api *API) resolveUserID(c *gin.Context, provided string) (string, bool) {
+	if provided != "" {
+		if _, err := api.users.Get(c.Request.Context(), provided); err != nil {
+			api.handleError(c, err)
+			return "", false
+		}
+		return provided, true
+	}
+	user, ok := api.requireSessionUser(c)
+	if !ok {
+		return "", false
+	}
+	return user.ID, true
 }

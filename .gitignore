@@ -3,3 +3,8 @@ backend/.luma.pid
 backend/logs/
 frontend-mac/.build/
 frontend-mac/.swiftpm/
+.vscode/
+.DS_Store
+frontend-mac/.DS_Store
+dist/
+docs/

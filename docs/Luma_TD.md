@@ -82,6 +82,7 @@ Tables:
 - `api_keys`
 - `sessions`
 - `messages`
+- `user_sessions`
 
 MVP assumes a single local user, but schema supports multiple users if needed later.
 
@@ -103,7 +104,7 @@ CREATE TABLE users (
 );
 ```
 
-- Backend seeds a default `local-user` for compatibility but frontends should explicitly create a user during onboarding.
+- Backend seeds a default `local-user` for compatibility; production accounts are created ahead of time or via the admin API, while consumer clients simply log in and receive a session cookie.
 - Passwords are never stored in plaintext; the service hashes them (bcrypt in the MVP).
 
 ---
@@ -207,6 +208,27 @@ CREATE TABLE messages (
     transformed_text  TEXT,                 -- only populated for 'rewrite'
     created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+---
+
+#### 4.2.7 `user_sessions`
+
+Persists login state so frontends can stay signed in without re-entering credentials.
+
+```sql
+CREATE TABLE user_sessions (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token        TEXT NOT NULL UNIQUE,
+    expires_at   TIMESTAMP NOT NULL,
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+- `token` is a 256-bit random hex string stored as an HTTP-only cookie (`luma_session`).
+- Sessions have a long expiry (~1 year) but `last_used_at` lets us expire idle sessions server-side later.
+- Logging out deletes the row and clears the cookie, immediately invalidating the device.
 
 CREATE INDEX idx_messages_session_id
     ON messages (session_id);

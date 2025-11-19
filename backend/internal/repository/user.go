@@ -66,3 +66,13 @@ func (r *UserRepository) List(ctx context.Context) ([]domain.User, error) {
 	}
 	return users, rows.Err()
 }
+
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (domain.User, error) {
+	var user domain.User
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, name, email, password_hash, created_at
+		FROM users
+		WHERE email = $1
+	`, email).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.CreatedAt)
+	return user, err
+}

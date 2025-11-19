@@ -39,6 +39,7 @@ func main() {
 	presetRepo := repository.NewPromptPresetRepository(db)
 	apiKeyRepo := repository.NewAPIKeyRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
+	userSessionRepo := repository.NewUserSessionRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
 	userRepo := repository.NewUserRepository(db)
 
@@ -49,6 +50,7 @@ func main() {
 	}
 
 	userService := service.NewUserService(userRepo)
+	authService := service.NewAuthService(userRepo, userSessionRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.Security.EncryptionKey)
 	llmRegistry := providers.NewRegistry()
 	llmRegistry.Register("openai", providers.NewOpenAIClient(providerBaseURL(cfg, "openai")))
@@ -57,7 +59,7 @@ func main() {
 	sessionService := service.NewSessionService(sessionRepo, messageRepo, promptService, apiKeyService, llmRegistry)
 	transcriptionService := service.NewTranscriptionService(apiKeyService, providerBaseMap(cfg))
 
-	handler := httpapi.NewRouter(userService, promptService, sessionService, apiKeyService, transcriptionService, logger)
+	handler := httpapi.NewRouter(userService, authService, promptService, sessionService, apiKeyService, transcriptionService, logger)
 	srv := server.New(cfg, handler, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

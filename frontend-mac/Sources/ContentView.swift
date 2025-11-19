@@ -102,38 +102,44 @@ struct UserCard: View {
                 .font(.headline)
             TextField("Backend URL", text: $state.backendBaseURL)
                 .textFieldStyle(.roundedBorder)
-            HStack {
-                TextField("Name", text: $state.userName)
-                TextField("Email", text: $state.userEmail)
-                SecureField("Password", text: $state.userPassword)
-            }
-            .textFieldStyle(.roundedBorder)
-            HStack {
-                Button("Create User") { state.registerUser() }
-                    .buttonStyle(.borderedProminent)
-                Button("Refresh Users") { state.loadUsers() }
-                if !state.userStatus.isEmpty {
-                    Text(state.userStatus)
-                        .font(.caption)
+            if state.isLoggedIn, let user = state.currentUser {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Signed in as \(user.name)", systemImage: "person.crop.circle.badge.checkmark")
+                        .font(.subheadline)
+                    Text(user.email)
                         .foregroundColor(.secondary)
-                }
-            }
-            if !state.users.isEmpty {
-                Picker("Existing Users", selection: Binding(
-                    get: { state.selectedUser },
-                    set: { newValue in
-                        if let user = newValue { state.select(user: user) }
+                    HStack {
+                        Button("Refresh Session") { state.restoreSession() }
+                        Button("Log Out") { state.logout() }
                     }
-                )) {
-                    ForEach(state.users) { user in
-                        Text("\(user.name) - \(user.email)").tag(Optional(user))
+                    .buttonStyle(.borderedProminent)
+                    if !state.userID.isEmpty {
+                        Text("User ID stored locally.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                 }
-                .pickerStyle(.menu)
-            }
-            if !state.userID.isEmpty {
-                Text("User ID: \(state.userID)")
-                    .font(.caption)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Sign in with your Luma account to sync presets and API keys.")
+                        .font(.subheadline)
+                    TextField("Email", text: $state.loginEmail)
+                        .textFieldStyle(.roundedBorder)
+                        .textContentType(.username)
+                    SecureField("Password", text: $state.loginPassword)
+                        .textFieldStyle(.roundedBorder)
+                        .textContentType(.password)
+                    HStack {
+                        Button("Log In") { state.login() }
+                            .buttonStyle(.borderedProminent)
+                        Button("Check Saved Session") { state.restoreSession() }
+                        if !state.loginStatus.isEmpty {
+                            Text(state.loginStatus)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
             }
         }
         .padding()
@@ -156,11 +162,18 @@ struct APIKeyCard: View {
             .pickerStyle(.segmented)
             SecureField("sk-...", text: $state.apiKey)
                 .textFieldStyle(.roundedBorder)
+                .disabled(!state.isLoggedIn)
             HStack {
                 Button("Save Key") { state.saveAPIKey() }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!state.isLoggedIn)
                 if !state.apiKeyStatus.isEmpty {
                     Text(state.apiKeyStatus)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if !state.isLoggedIn {
+                    Text("Log in first to sync keys.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -252,14 +265,40 @@ struct RecordingControls: View {
                 Button(state.recordingMode == .temporaryPrompt ? "Stop Prompt" : "Record Temporary Prompt") {
                     toggle(mode: .temporaryPrompt)
                 }
+                .disabled(!state.isLoggedIn)
                 Button(state.recordingMode == .mainContent ? "Stop Main" : "Record Main Content") {
                     toggle(mode: .mainContent)
                 }
+                .disabled(!state.isLoggedIn)
             }
             .buttonStyle(.borderedProminent)
+            if !state.isLoggedIn {
+                Text("Log in to enable capture shortcuts.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
             if state.recordingMode != .idle {
                 Text("Listening… press the shortcut again or click stop.")
                     .font(.caption)
+            }
+            if !state.captureStatus.isEmpty {
+                Text(state.captureStatus)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if !state.latestPromptText.isEmpty {
+                TranscriptionPreview(
+                    title: "Last Temporary Prompt",
+                    text: state.latestPromptText,
+                    copyAction: state.copyLatestPromptToClipboard
+                )
+            }
+            if !state.latestContentText.isEmpty {
+                TranscriptionPreview(
+                    title: "Last Main Content",
+                    text: state.latestContentText,
+                    copyAction: state.copyLatestContentToClipboard
+                )
             }
         }
         .padding()
@@ -341,6 +380,38 @@ struct RecordingOverlay: View {
                 Spacer()
             }
             Spacer()
+        }
+    }
+}
+
+struct TranscriptionPreview: View {
+    var title: String
+    var text: String
+    var copyAction: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.subheadline)
+                    .bold()
+                Spacer()
+#if os(macOS)
+                if let copyAction = copyAction {
+                    Button("Copy") { copyAction() }
+                        .buttonStyle(.bordered)
+                }
+#endif
+            }
+            Text(text)
+                .font(.body)
+                .lineLimit(5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.primary.opacity(0.05))
+                )
         }
     }
 }
