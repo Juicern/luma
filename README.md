@@ -29,6 +29,18 @@ go run ./cmd/server
 
 Migration SQL executes on startup. Default system prompt + preset store are created automatically.
 
+## Make Targets
+
+The `Makefile` captures common workflows:
+
+- `make setup` – download/update modules.
+- `make run` – run server in the foreground (uses `go run`).
+- `make start` / `make stop` – start server in background using compiled binary and stop it via PID file.
+- `make db` – run migrations only (via `cmd/migrate`).
+- `make test` / `make lint` / `make fmt` – verify code health.
+- `make release` – build distributable binaries under `dist/`.
+- `make clean` – remove build artifacts and PID.
+
 ## HTTP API (v1)
 
 All responses are JSON. Errors follow `{ "error": "<code>" }`.
@@ -81,4 +93,3 @@ curl -X POST http://localhost:8080/api/v1/sessions/<session-id>/rewrite \
 ```
 
 > The current LLM adapter (`providers.EchoClient`) simply echoes the composed prompts so that the wiring can be tested without calling real providers. Plug in real provider clients later by registering them in `cmd/server/main.go`.
-
