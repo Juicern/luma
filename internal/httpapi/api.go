@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Juicern/luma/internal/domain"
 	"github.com/Juicern/luma/internal/service"
 )
 
@@ -189,23 +191,29 @@ func (api *API) listUsers(c *gin.Context) {
 		api.handleError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, users)
+	resp := make([]userResponse, 0, len(users))
+	for _, user := range users {
+		resp = append(resp, toUserResponse(user))
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (api *API) createUser(c *gin.Context) {
 	var payload struct {
-		Name string `json:"name" binding:"required"`
+		Name     string `json:"name" binding:"required"`
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required,min=8"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		api.validationError(c, "name is required")
+		api.validationError(c, "name, email, and password are required")
 		return
 	}
-	user, err := api.users.Create(c.Request.Context(), payload.Name)
+	user, err := api.users.Create(c.Request.Context(), payload.Name, payload.Email, payload.Password)
 	if err != nil {
 		api.handleError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, user)
+	c.JSON(http.StatusCreated, toUserResponse(user))
 }
 
 func (api *API) createSession(c *gin.Context) {
@@ -313,6 +321,22 @@ func (api *API) requireUserQuery(c *gin.Context) (string, bool) {
 		return "", false
 	}
 	return userID, true
+}
+
+type userResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func toUserResponse(u domain.User) userResponse {
+	return userResponse{
+		ID:        u.ID,
+		Name:      u.Name,
+		Email:     u.Email,
+		CreatedAt: u.CreatedAt,
+	}
 }
 
 func (api *API) createTranscription(c *gin.Context) {

@@ -49,7 +49,7 @@ All responses are JSON. Errors follow `{ "error": "<code>" }`.
 | Endpoint | Description |
 | --- | --- |
 | `GET /api/v1/users` | List users |
-| `POST /api/v1/users` | Create user (`name`) |
+| `POST /api/v1/users` | Create user (`name`, `email`, `password`) |
 | `GET /healthz` | Health probe |
 | `GET /api/v1/system-prompt` | Read active system prompt |
 | `PUT /api/v1/system-prompt` | Update system prompt (`{ "prompt_text": "..." }`) |
@@ -73,7 +73,7 @@ All responses are JSON. Errors follow `{ "error": "<code>" }`.
 # 0) create a user
 curl -X POST http://localhost:8080/api/v1/users \
   -H "Content-Type: application/json" \
-  -d '{"name":"Local User"}'
+  -d '{"name":"Local User","email":"me@example.com","password":"changeme123"}'
 # -> grab the "id" (e.g., 2fc4...)
 
 # store a fake OpenAI key (required before rewrites)

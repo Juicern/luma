@@ -95,13 +95,16 @@ Stores application users.
 
 ```sql
 CREATE TABLE users (
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    email         TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-- Backend seeds a default `local-user` for compatibility but new installs should create explicit users.
+- Backend seeds a default `local-user` for compatibility but frontends should explicitly create a user during onboarding.
+- Passwords are never stored in plaintext; the service hashes them (bcrypt in the MVP).
 
 ---
 
@@ -219,7 +222,7 @@ All HTTP routes live under `/api/v1` (plus `/healthz`). Gin handles middleware, 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/v1/users` | List users (MVP UI might just call once). |
-| `POST /api/v1/users` | Create a user (`name`). |
+| `POST /api/v1/users` | Create a user (`name`, `email`, `password`). |
 | `GET /api/v1/system-prompt` | Read the active system prompt. |
 | `PUT /api/v1/system-prompt` | Update system prompt (`{ "prompt_text": "..." }`). |
 | `GET /api/v1/presets` | List presets. |

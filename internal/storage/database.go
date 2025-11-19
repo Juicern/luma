@@ -43,11 +43,13 @@ const schemaSQL = `
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO users (id, name, created_at)
-VALUES ('local-user', 'Local User', CURRENT_TIMESTAMP)
+INSERT INTO users (id, name, email, password_hash, created_at)
+VALUES ('local-user', 'Local User', 'local@example.com', '$2a$10$rWDlMSB2oE9n1kpLMht0n.7EfmgBl08YfC6I.wfPvj9ycwkQqu8nO', CURRENT_TIMESTAMP)
 ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS system_prompts (

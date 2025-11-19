@@ -59,7 +59,9 @@ type Message struct {
 }
 
 type User struct {
-	ID        string    `db:"id"`
-	Name      string    `db:"name"`
-	CreatedAt time.Time `db:"created_at"`
+	ID           string    `db:"id"`
+	Name         string    `db:"name"`
+	Email        string    `db:"email"`
+	PasswordHash string    `db:"password_hash"`
+	CreatedAt    time.Time `db:"created_at"`
 }
