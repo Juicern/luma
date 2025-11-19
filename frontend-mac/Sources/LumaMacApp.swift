@@ -4,6 +4,10 @@ import SwiftUI
 struct LumaMacApp: App {
     @StateObject private var state = AppState()
 
+    init() {
+        Bundle.ensureMainBundleIdentifier("com.juicern.lumamac")
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -24,6 +28,15 @@ struct LumaMacApp: App {
                 }
                 .keyboardShortcut(.init(Character("m")), modifiers: [.option])
             }
+        }
+    }
+}
+
+private extension Bundle {
+    static func ensureMainBundleIdentifier(_ identifier: String) {
+        let main = Bundle.main
+        if main.bundleIdentifier == nil {
+            main.setValue(identifier, forKey: "bundleIdentifier")
         }
     }
 }
