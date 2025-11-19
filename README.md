@@ -30,6 +30,13 @@ go run ./cmd/server
 
 Migration SQL executes on startup (against Postgres). If the database in `LUMA_DB_DSN` does not exist, the server will attempt to create it (requires sufficient privileges). Default system prompt + preset store are created automatically.
 
+### Providers
+
+By default the backend registers:
+
+- `openai` – uses the official Chat Completions API via `github.com/sashabaranov/go-openai`. Any rewrite request with `provider_name: "openai"` will make a real API call using the stored key. Override the base URL through `providers[].base_url` in `config.yaml` if needed.
+- `gemini` – still mocked via the Echo client until its adapter is implemented.
+
 ## Make Targets
 
 The `Makefile` captures common workflows:

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Juicern/luma/internal/config"
@@ -50,7 +51,7 @@ func main() {
 	userService := service.NewUserService(userRepo)
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.Security.EncryptionKey)
 	llmRegistry := providers.NewRegistry()
-	llmRegistry.Register("openai", providers.EchoClient{})
+	llmRegistry.Register("openai", providers.NewOpenAIClient(providerBaseURL(cfg, "openai")))
 	llmRegistry.Register("gemini", providers.EchoClient{})
 
 	sessionService := service.NewSessionService(sessionRepo, messageRepo, promptService, apiKeyService, llmRegistry)
@@ -66,4 +67,13 @@ func main() {
 		logger.Error("server stopped with error", slog.Any("error", err))
 		os.Exit(1)
 	}
+}
+
+func providerBaseURL(cfg config.Config, name string) string {
+	for _, provider := range cfg.Providers {
+		if strings.EqualFold(provider.Name, name) {
+			return provider.BaseURL
+		}
+	}
+	return ""
 }

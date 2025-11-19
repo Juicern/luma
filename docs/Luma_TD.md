@@ -253,6 +253,7 @@ Core services and responsibilities:
 - **SessionService** – creates sessions, stores content/rewrite messages, orchestrates prompt composition, and delegates rewrite calls to provider clients.
 - **TranscriptionService** – pluggable STT client (stubbed for now, ready for Whisper/OpenAI).
 - **Provider Registry** – map of provider name → `LLMClient` implementation (Echo client today; replace with OpenAI/Gemini adapters later).
+  - In code, `openai` uses the actual Chat Completions API via `github.com/sashabaranov/go-openai`, while `gemini` remains a mock until implemented.
 
 These services encapsulate persistence and provider logic, allowing the HTTP layer to stay declarative and simplifying future swaps (e.g., adding a new provider or database).
 
