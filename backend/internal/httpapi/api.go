@@ -335,6 +335,20 @@ func (api *API) createTranscription(c *gin.Context) {
 		return
 	}
 
+	userID := c.PostForm("user_id")
+	if userID == "" {
+		api.validationError(c, "user_id is required")
+		return
+	}
+	if _, err := api.users.Get(c.Request.Context(), userID); err != nil {
+		api.handleError(c, err)
+		return
+	}
+	provider := c.PostForm("provider")
+	if provider == "" {
+		provider = "openai"
+	}
+
 	f, err := file.Open()
 	if err != nil {
 		api.handleError(c, err)
@@ -348,7 +362,7 @@ func (api *API) createTranscription(c *gin.Context) {
 		return
 	}
 
-	text, err := api.transcription.Transcribe(c.Request.Context(), data, file.Filename)
+	text, err := api.transcription.Transcribe(c.Request.Context(), userID, provider, data, file.Filename)
 	if err != nil {
 		api.handleError(c, err)
 		return

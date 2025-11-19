@@ -55,7 +55,7 @@ func main() {
 	llmRegistry.Register("gemini", providers.EchoClient{})
 
 	sessionService := service.NewSessionService(sessionRepo, messageRepo, promptService, apiKeyService, llmRegistry)
-	transcriptionService := service.NewTranscriptionService()
+	transcriptionService := service.NewTranscriptionService(apiKeyService, providerBaseMap(cfg))
 
 	handler := httpapi.NewRouter(userService, promptService, sessionService, apiKeyService, transcriptionService, logger)
 	srv := server.New(cfg, handler, logger)
@@ -76,4 +76,12 @@ func providerBaseURL(cfg config.Config, name string) string {
 		}
 	}
 	return ""
+}
+
+func providerBaseMap(cfg config.Config) map[string]string {
+	m := make(map[string]string)
+	for _, provider := range cfg.Providers {
+		m[strings.ToLower(provider.Name)] = provider.BaseURL
+	}
+	return m
 }
