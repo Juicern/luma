@@ -5,92 +5,77 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/gin-gonic/gin"
 
 	"github.com/Juicern/luma/internal/app"
 )
 
 type DocumentHandler struct {
 	service *app.DocumentService
-	logger  Logger
 }
 
-func NewDocumentHandler(service *app.DocumentService, logger Logger) *DocumentHandler {
-	return &DocumentHandler{service: service, logger: logger}
+func NewDocumentHandler(service *app.DocumentService) *DocumentHandler {
+	return &DocumentHandler{service: service}
 }
 
-func (h *DocumentHandler) Routes() chi.Router {
-	r := chi.NewRouter()
-	r.Get("/", h.listDocuments)
-	r.Post("/", h.createDocument)
-	r.Get("/{id}", h.getDocument)
-	r.Put("/{id}", h.updateDocument)
-	r.Delete("/{id}", h.deleteDocument)
-	return r
+func (h *DocumentHandler) RegisterRoutes(r *gin.RouterGroup) {
+	r.GET("/", h.listDocuments)
+	r.POST("/", h.createDocument)
+	r.GET("/:id", h.getDocument)
+	r.PUT("/:id", h.updateDocument)
+	r.DELETE("/:id", h.deleteDocument)
 }
 
-func (h *DocumentHandler) listDocuments(w http.ResponseWriter, r *http.Request) {
+func (h *DocumentHandler) listDocuments(c *gin.Context) {
 	docs := h.service.List()
-	writeJSON(w, http.StatusOK, docs)
+	c.JSON(http.StatusOK, docs)
 }
 
-func (h *DocumentHandler) createDocument(w http.ResponseWriter, r *http.Request) {
-	var payload documentPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON payload")
-		return
-	}
-
-	if err := payload.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+func (h *DocumentHandler) createDocument(c *gin.Context) {
+	payload, err := decodeDocumentPayload(c)
+	if err != nil {
 		return
 	}
 
 	doc := h.service.Create(payload.Title, payload.Content)
-	writeJSON(w, http.StatusCreated, doc)
+	c.JSON(http.StatusCreated, doc)
 }
 
-func (h *DocumentHandler) getDocument(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+func (h *DocumentHandler) getDocument(c *gin.Context) {
+	id := c.Param("id")
 	doc, err := h.service.Get(id)
 	if err != nil {
-		handleDocumentError(w, err)
+		handleDocumentError(c, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doc)
+	c.JSON(http.StatusOK, doc)
 }
 
-func (h *DocumentHandler) updateDocument(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	var payload documentPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON payload")
-		return
-	}
-
-	if err := payload.Validate(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+func (h *DocumentHandler) updateDocument(c *gin.Context) {
+	id := c.Param("id")
+	payload, err := decodeDocumentPayload(c)
+	if err != nil {
 		return
 	}
 
 	doc, err := h.service.Update(id, payload.Title, payload.Content)
 	if err != nil {
-		handleDocumentError(w, err)
+		handleDocumentError(c, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, doc)
+	c.JSON(http.StatusOK, doc)
 }
 
-func (h *DocumentHandler) deleteDocument(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+func (h *DocumentHandler) deleteDocument(c *gin.Context) {
+	id := c.Param("id")
 	if err := h.service.Delete(id); err != nil {
-		handleDocumentError(w, err)
+		handleDocumentError(c, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }
 
 type documentPayload struct {
@@ -108,11 +93,26 @@ func (p documentPayload) Validate() error {
 	return nil
 }
 
-func handleDocumentError(w http.ResponseWriter, err error) {
+func decodeDocumentPayload(c *gin.Context) (documentPayload, error) {
+	var payload documentPayload
+	if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON payload"})
+		return documentPayload{}, err
+	}
+
+	if err := payload.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return documentPayload{}, err
+	}
+
+	return payload, nil
+}
+
+func handleDocumentError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, app.ErrDocumentNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	default:
-		writeError(w, http.StatusInternalServerError, "internal error")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 	}
 }

@@ -18,7 +18,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	service := app.NewDocumentService(logger)
-	handler := httpapi.NewRouter(service, logger)
+	handler := httpapi.NewRouter(service)
 	srv := server.New(cfg, handler, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
