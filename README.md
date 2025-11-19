@@ -5,7 +5,7 @@ Golang backend that fulfills the requirements outlined in `docs/Luma_PRD.md` and
 ## Prerequisites
 
 - Go 1.24+
-- SQLite (default) **or** PostgreSQL if you set `database.driver=postgres`
+- A running PostgreSQL instance (see `LUMA_DB_DSN`)
 - Set an encryption key (for API keys) via `LUMA_SECRET_KEY`
 
 ## Configuration
@@ -16,9 +16,7 @@ Settings come from `config.yaml` (see committed example) and environment variabl
 | --- | --- | --- |
 | `HTTP_PORT` | `8080` | Server port |
 | `HTTP_SHUTDOWN_TIMEOUT` | `10` | Graceful shutdown timeout in seconds |
-| `LUMA_DB_DRIVER` | `sqlite` | `sqlite` or `postgres` |
-| `LUMA_DB_PATH` | `./data/luma.db` | SQLite file path |
-| `LUMA_DB_DSN` | _(empty)_ | Postgres DSN when `driver=postgres` (e.g. `postgres://user:pass@localhost/luma?sslmode=disable`) |
+| `LUMA_DB_DSN` | `postgres://postgres:postgres@localhost:5432/luma?sslmode=disable` | Postgres DSN connection string |
 | `LUMA_SECRET_KEY` | _required for API keys_ | Symmetric key for AES-GCM encryption |
 | `LUMA_CONFIG` | `config.yaml` | Custom config file location |
 
@@ -26,13 +24,11 @@ Settings come from `config.yaml` (see committed example) and environment variabl
 
 ```bash
 export LUMA_SECRET_KEY="local-dev-secret"
-# optionally:
-# export LUMA_DB_DRIVER=postgres
-# export LUMA_DB_DSN="postgres://postgres:postgres@localhost:5432/luma?sslmode=disable"
+export LUMA_DB_DSN="postgres://postgres:postgres@localhost:5432/luma?sslmode=disable"
 go run ./cmd/server
 ```
 
-Migration SQL executes on startup (against SQLite or Postgres). Default system prompt + preset store are created automatically.
+Migration SQL executes on startup (against Postgres). Default system prompt + preset store are created automatically.
 
 ## Make Targets
 

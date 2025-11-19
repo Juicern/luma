@@ -3,9 +3,7 @@ server:
   shutdown_timeout: 10
 
 database:
-  driver: sqlite # or "postgres"
-  path: ./data/luma.db
-  dsn: "" # used when driver=postgres
+  dsn: postgres://postgres:postgres@localhost:5432/luma?sslmode=disable
 
 providers:
   - name: openai

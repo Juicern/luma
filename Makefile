@@ -16,11 +16,10 @@ build: ## Build the server binary
 	go build -o $(BIN) ./cmd/server
 
 run: ## Run the server in the foreground
-	mkdir -p data
 	LUMA_SECRET_KEY=$(LUMA_SECRET_KEY) go run ./cmd/server
 
 start: build ## Start server in background using built binary
-	mkdir -p data $(LOG_DIR)
+	mkdir -p $(LOG_DIR)
 	@echo "Starting $(APP_NAME) in background..."
 	@LUMA_SECRET_KEY=$(LUMA_SECRET_KEY) nohup $(BIN) > $(LOG_DIR)/server.log 2>&1 & echo $$! > $(PID_FILE)
 	@echo "PID saved to $(PID_FILE); logs -> $(LOG_DIR)/server.log"

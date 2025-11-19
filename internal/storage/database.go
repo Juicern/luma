@@ -4,51 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "modernc.org/sqlite"
 
 	"github.com/Juicern/luma/internal/config"
 )
 
 func NewDatabase(cfg config.DatabaseConfig) (*sql.DB, error) {
-	driver := strings.ToLower(cfg.Driver)
-	if driver == "" {
-		driver = "sqlite"
+	if cfg.DSN == "" {
+		return nil, errors.New("database DSN is required")
 	}
-
-	switch driver {
-	case "sqlite":
-		if cfg.Path == "" {
-			return nil, errors.New("database path required for sqlite")
-		}
-		if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
-			return nil, err
-		}
-		db, err := sql.Open("sqlite", cfg.Path)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
-			return nil, err
-		}
-		return db, nil
-	case "postgres":
-		if cfg.DSN == "" {
-			return nil, errors.New("database DSN required for postgres")
-		}
-		db, err := sql.Open("pgx", cfg.DSN)
-		if err != nil {
-			return nil, err
-		}
-		return db, nil
-	default:
-		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
+	db, err := sql.Open("pgx", cfg.DSN)
+	if err != nil {
+		return nil, err
 	}
+	return db, nil
 }
 
 func RunMigrations(ctx context.Context, db *sql.DB) error {

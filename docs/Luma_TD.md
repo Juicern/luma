@@ -7,7 +7,7 @@ This document describes the technical design for **Luma**, a local-first voice-t
 The system consists of:
 
 - A **local backend** (Golang) exposing HTTP APIs.
-- A **local database** (SQLite for MVP; schema compatible with Postgres).
+- A **local database** (PostgreSQL).
 - Integration with:
   - Speech-to-Text API (e.g. Whisper via OpenAI).
   - Multiple LLM providers (OpenAI, Gemini, etc.).
@@ -37,9 +37,9 @@ This TD focuses on the backend and shared data model.
    |           |           |
    |           |           |
    v           v           v
-Speech-to-Text  LLM Service    Local DB (SQLite)
+Speech-to-Text  LLM Service    Local DB (Postgres)
 (Whisper API)   (OpenAI/       (migrations for
-                Gemini/...)    SQLite/Postgres)
+                Gemini/...)    Postgres)
 ```
 
 - The backend is stateless except for DB storage.
@@ -54,9 +54,7 @@ Speech-to-Text  LLM Service    Local DB (SQLite)
 
 - Language: **Golang 1.24+**
 - HTTP router: **Gin** (structured middleware and JSON helpers).
-- Database:
-  - Default: **SQLite** (file-based, e.g. `./data/luma.db`).
-  - Optional: **Postgres** via DSN (`LUMA_DB_DRIVER=postgres`).
+- Database: **Postgres** via DSN (`LUMA_DB_DSN`)
 - Migrations: SQL strings checked into the repo and executed on startup via the server or `cmd/migrate`.
 - Config: Lightweight YAML + env loader (`internal/config`).
 - Logging: standard library `slog` (JSON handler).
@@ -262,7 +260,7 @@ Repositories are responsible for persistence:
   - `CreateRewriteMessage`
   - `FindBySession`
 
-Repositories should be implemented in a way that the DB driver (SQLite vs Postgres) can be swapped with minimal changes (e.g., using standard SQL and avoiding vendor-specific extensions).
+Repositories are implemented using standard SQL to run on Postgres.
 
 ---
 
@@ -312,9 +310,7 @@ server:
   port: 8080
 
 database:
-  driver: sqlite          # or postgres
-  path: ./data/luma.db    # used when driver=sqlite
-  dsn: ""                 # used when driver=postgres
+  dsn: postgres://postgres:postgres@localhost:5432/luma?sslmode=disable
 
 providers:
   - name: openai
