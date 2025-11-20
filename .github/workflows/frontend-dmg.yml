@@ -1,0 +1,30 @@
+name: Build Luma DMG
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-dmg:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install make || true
+
+      - name: Build DMG
+        working-directory: frontend-mac
+        run: |
+          make dmg
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Luma-mac
+          path: dist/LumaMac.dmg
