@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,7 +20,6 @@ type API struct {
 	users         *service.UserService
 	auth          *service.AuthService
 	prompts       *service.PromptService
-	sessions      *service.SessionService
 	keys          *service.APIKeyService
 	transcription *service.TranscriptionService
 	logger        *slog.Logger
@@ -48,12 +46,6 @@ func (api *API) registerRoutes(r *gin.RouterGroup) {
 	r.DELETE("/api-keys/:provider", api.deleteAPIKey)
 
 	r.POST("/transcriptions", api.createTranscription)
-
-	r.GET("/sessions", api.listSessions)
-	r.POST("/sessions", api.createSession)
-	r.GET("/sessions/:id", api.getSession)
-	r.POST("/sessions/:id/messages", api.addContentMessage)
-	r.POST("/sessions/:id/rewrite", api.rewriteMessage)
 }
 
 func (api *API) login(c *gin.Context) {
@@ -125,7 +117,11 @@ func (api *API) updateSystemPrompt(c *gin.Context) {
 }
 
 func (api *API) listPresets(c *gin.Context) {
-	presets, err := api.prompts.ListPresets(c.Request.Context())
+	userID, ok := api.requireUserQuery(c)
+	if !ok {
+		return
+	}
+	presets, err := api.prompts.ListPresets(c.Request.Context(), userID)
 	if err != nil {
 		api.handleError(c, err)
 		return
@@ -135,6 +131,7 @@ func (api *API) listPresets(c *gin.Context) {
 
 func (api *API) createPreset(c *gin.Context) {
 	var payload struct {
+		UserID     string `json:"user_id"`
 		Name       string `json:"name" binding:"required"`
 		PromptText string `json:"prompt_text" binding:"required"`
 	}
@@ -142,7 +139,11 @@ func (api *API) createPreset(c *gin.Context) {
 		api.validationError(c, "name and prompt_text are required")
 		return
 	}
-	preset, err := api.prompts.CreatePreset(c.Request.Context(), payload.Name, payload.PromptText)
+	userID, ok := api.resolveUserID(c, payload.UserID)
+	if !ok {
+		return
+	}
+	preset, err := api.prompts.CreatePreset(c.Request.Context(), userID, payload.Name, payload.PromptText)
 	if err != nil {
 		api.handleError(c, err)
 		return
@@ -152,6 +153,7 @@ func (api *API) createPreset(c *gin.Context) {
 
 func (api *API) updatePreset(c *gin.Context) {
 	var payload struct {
+		UserID     string `json:"user_id"`
 		Name       string `json:"name" binding:"required"`
 		PromptText string `json:"prompt_text" binding:"required"`
 	}
@@ -159,7 +161,11 @@ func (api *API) updatePreset(c *gin.Context) {
 		api.validationError(c, "name and prompt_text are required")
 		return
 	}
-	preset, err := api.prompts.UpdatePreset(c.Request.Context(), c.Param("id"), payload.Name, payload.PromptText)
+	userID, ok := api.resolveUserID(c, payload.UserID)
+	if !ok {
+		return
+	}
+	preset, err := api.prompts.UpdatePreset(c.Request.Context(), c.Param("id"), userID, payload.Name, payload.PromptText)
 	if err != nil {
 		api.handleError(c, err)
 		return
@@ -168,7 +174,11 @@ func (api *API) updatePreset(c *gin.Context) {
 }
 
 func (api *API) deletePreset(c *gin.Context) {
-	if err := api.prompts.DeletePreset(c.Request.Context(), c.Param("id")); err != nil {
+	userID, ok := api.resolveUserID(c, c.Query("user_id"))
+	if !ok {
+		return
+	}
+	if err := api.prompts.DeletePreset(c.Request.Context(), c.Param("id"), userID); err != nil {
 		api.handleError(c, err)
 		return
 	}
@@ -249,100 +259,6 @@ func (api *API) createUser(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, toUserResponse(user))
-}
-
-func (api *API) createSession(c *gin.Context) {
-	var payload struct {
-		UserID           string  `json:"user_id"`
-		PresetID         string  `json:"preset_id" binding:"required"`
-		ProviderName     string  `json:"provider_name" binding:"required"`
-		Model            string  `json:"model" binding:"required"`
-		TemporaryPrompt  *string `json:"temporary_prompt"`
-		ContextText      *string `json:"context_text"`
-		ClipboardEnabled bool    `json:"clipboard_enabled"`
-	}
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		api.validationError(c, "preset_id, provider_name, and model are required")
-		return
-	}
-	userID, ok := api.resolveUserID(c, payload.UserID)
-	if !ok {
-		return
-	}
-	session, err := api.sessions.CreateSession(c.Request.Context(), service.SessionInput{
-		UserID:           userID,
-		PresetID:         payload.PresetID,
-		ProviderName:     payload.ProviderName,
-		Model:            payload.Model,
-		TemporaryPrompt:  payload.TemporaryPrompt,
-		ContextText:      payload.ContextText,
-		ClipboardEnabled: payload.ClipboardEnabled,
-	})
-	if err != nil {
-		api.handleError(c, err)
-		return
-	}
-	c.JSON(http.StatusCreated, session)
-}
-
-func (api *API) listSessions(c *gin.Context) {
-	userID, ok := api.requireUserQuery(c)
-	if !ok {
-		return
-	}
-	limit := 25
-	if raw := c.Query("limit"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
-	sessions, err := api.sessions.ListSessions(c.Request.Context(), userID, limit)
-	if err != nil {
-		api.handleError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, sessions)
-}
-
-func (api *API) getSession(c *gin.Context) {
-	detail, err := api.sessions.GetSessionDetail(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		api.handleError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, detail)
-}
-
-func (api *API) addContentMessage(c *gin.Context) {
-	var payload struct {
-		RawText string `json:"raw_text" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		api.validationError(c, "raw_text is required")
-		return
-	}
-	msg, err := api.sessions.AddContentMessage(c.Request.Context(), c.Param("id"), payload.RawText)
-	if err != nil {
-		api.handleError(c, err)
-		return
-	}
-	c.JSON(http.StatusCreated, msg)
-}
-
-func (api *API) rewriteMessage(c *gin.Context) {
-	var payload struct {
-		MessageID string `json:"message_id" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		api.validationError(c, "message_id is required")
-		return
-	}
-	msg, err := api.sessions.RewriteMessage(c.Request.Context(), c.Param("id"), payload.MessageID)
-	if err != nil {
-		api.handleError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, msg)
 }
 
 func (api *API) requireUserQuery(c *gin.Context) (string, bool) {

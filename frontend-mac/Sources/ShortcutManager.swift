@@ -1,82 +1,58 @@
 #if os(macOS)
-import Foundation
-import Carbon.HIToolbox
+import Cocoa
 
 final class ShortcutManager {
     static let shared = ShortcutManager()
 
-    private var temporaryRef: EventHotKeyRef?
-    private var mainRef: EventHotKeyRef?
-    private var eventHandler: EventHandlerRef?
-    private var callback: ((RecordingMode) -> Void)?
+    private var temporaryShortcut: RecordingShortcut?
+    private var mainShortcut: RecordingShortcut?
+    private var handler: ((RecordingMode) -> Void)?
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
 
     private init() {}
 
     func configure(temporary: RecordingShortcut, main: RecordingShortcut, handler: @escaping (RecordingMode) -> Void) {
-        callback = handler
-        unregister()
-        installHandlerIfNeeded()
-        temporaryRef = register(shortcut: temporary, id: 1)
-        mainRef = register(shortcut: main, id: 2)
+        temporaryShortcut = temporary
+        mainShortcut = main
+        self.handler = handler
+        installTapIfNeeded()
     }
 
-    private func installHandlerIfNeeded() {
-        guard eventHandler == nil else { return }
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetEventDispatcherTarget(), { (_, event, userData) -> OSStatus in
-            guard let userData = userData else { return noErr }
-            let manager = Unmanaged<ShortcutManager>.fromOpaque(userData).takeUnretainedValue()
-            return manager.handle(event: event)
-        }, 1, &eventType, UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()), &eventHandler)
+    private func installTapIfNeeded() {
+        guard eventTap == nil else { return }
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        let callback: CGEventTapCallBack = { _, type, event, refcon in
+            guard type == .keyDown, let refcon = refcon else {
+                return Unmanaged.passUnretained(event)
+            }
+            let manager = Unmanaged<ShortcutManager>.fromOpaque(refcon).takeUnretainedValue()
+            manager.handle(event: event)
+            return Unmanaged.passUnretained(event)
+        }
+        eventTap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: callback,
+            userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        )
+        guard let eventTap else { return }
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
     }
 
-    private func register(shortcut: RecordingShortcut, id: UInt32) -> EventHotKeyRef? {
-        var ref: EventHotKeyRef?
-        let hotKeyID = EventHotKeyID(signature: OSType("LUMA".fourCharCodeValue), id: id)
-        let result = RegisterEventHotKey(shortcut.carbonKeyCode, shortcut.carbonFlags, hotKeyID, GetEventDispatcherTarget(), 0, &ref)
-        if result != noErr {
-            return nil
+    private func handle(event: CGEvent) {
+        guard let handler else { return }
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let flags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
+        if let shortcut = temporaryShortcut, shortcut.matches(keyCode: keyCode, flags: flags) {
+            DispatchQueue.main.async { handler(.temporaryPrompt) }
+        } else if let shortcut = mainShortcut, shortcut.matches(keyCode: keyCode, flags: flags) {
+            DispatchQueue.main.async { handler(.mainContent) }
         }
-        return ref
-    }
-
-    private func unregister() {
-        if let temp = temporaryRef {
-            UnregisterEventHotKey(temp)
-            temporaryRef = nil
-        }
-        if let main = mainRef {
-            UnregisterEventHotKey(main)
-            mainRef = nil
-        }
-    }
-
-    private func handle(event: EventRef?) -> OSStatus {
-        guard let event = event else { return noErr }
-        var hotKeyID = EventHotKeyID()
-        var size = MemoryLayout<EventHotKeyID>.size
-        let status = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, size, &size, &hotKeyID)
-        guard status == noErr else { return noErr }
-        guard hotKeyID.signature == OSType("LUMA".fourCharCodeValue) else { return noErr }
-        switch hotKeyID.id {
-        case 1:
-            callback?(.temporaryPrompt)
-        case 2:
-            callback?(.mainContent)
-        default:
-            break
-        }
-        return noErr
-    }
-}
-
-private extension String {
-    var fourCharCodeValue: UInt32 {
-        var result: UInt32 = 0
-        for scalar in unicodeScalars {
-            result = (result << 8) + UInt32(scalar.value)
-        }
-        return result
     }
 }
 #endif

@@ -38,9 +38,7 @@ func main() {
 	systemRepo := repository.NewSystemPromptRepository(db)
 	presetRepo := repository.NewPromptPresetRepository(db)
 	apiKeyRepo := repository.NewAPIKeyRepository(db)
-	sessionRepo := repository.NewSessionRepository(db)
 	userSessionRepo := repository.NewUserSessionRepository(db)
-	messageRepo := repository.NewMessageRepository(db)
 	userRepo := repository.NewUserRepository(db)
 
 	promptService := service.NewPromptService(systemRepo, presetRepo)
@@ -56,10 +54,9 @@ func main() {
 	llmRegistry.Register("openai", providers.NewOpenAIClient(providerBaseURL(cfg, "openai")))
 	llmRegistry.Register("gemini", providers.EchoClient{})
 
-	sessionService := service.NewSessionService(sessionRepo, messageRepo, promptService, apiKeyService, llmRegistry)
 	transcriptionService := service.NewTranscriptionService(apiKeyService, providerBaseMap(cfg))
 
-	handler := httpapi.NewRouter(userService, authService, promptService, sessionService, apiKeyService, transcriptionService, logger)
+	handler := httpapi.NewRouter(userService, authService, promptService, apiKeyService, transcriptionService, logger)
 	srv := server.New(cfg, handler, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

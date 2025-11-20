@@ -84,7 +84,7 @@ Tables:
 - `messages`
 - `user_sessions`
 
-MVP assumes a single local user, but schema supports multiple users if needed later.
+MVP assumes a single local user, but schema supports multiple users if needed later. Transcriptions themselves are not persisted; the client keeps a short local history for convenience.
 
 ---
 
@@ -173,45 +173,7 @@ CREATE UNIQUE INDEX idx_api_keys_user_provider
 
 ---
 
-#### 4.2.5 `sessions`
-
-Represents a single rewrite flow (preset + provider/model + optional temporary prompt/context).
-
-```sql
-CREATE TABLE sessions (
-    id                TEXT PRIMARY KEY,
-    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    preset_id         TEXT NOT NULL REFERENCES user_prompt_presets(id) ON DELETE CASCADE,
-    provider_name     TEXT NOT NULL,
-    model             TEXT NOT NULL,
-    temporary_prompt  TEXT,
-    context_text      TEXT,
-    clipboard_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    system_prompt_id  TEXT NOT NULL REFERENCES system_prompts(id),
-    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-```
-
----
-
-#### 4.2.6 `messages`
-
-Stores both original content and rewritten result.
-
-```sql
-CREATE TABLE messages (
-    id                TEXT PRIMARY KEY,     -- UUID
-    session_id        TEXT NOT NULL,        -- FK to sessions(id)
-    type              TEXT NOT NULL,        -- 'content' or 'rewrite'
-    raw_text          TEXT NOT NULL,        -- transcribed or input text
-    transformed_text  TEXT,                 -- only populated for 'rewrite'
-    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
----
-
-#### 4.2.7 `user_sessions`
+#### 4.2.5 `user_sessions`
 
 Persists login state so frontends can stay signed in without re-entering credentials.
 

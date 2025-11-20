@@ -70,19 +70,29 @@ func (r *PromptPresetRepository) Create(ctx context.Context, userID, name, promp
 	return preset, err
 }
 
-func (r *PromptPresetRepository) Update(ctx context.Context, id, name, promptText string) (domain.PromptPreset, error) {
+func (r *PromptPresetRepository) Update(ctx context.Context, id, userID, name, promptText string) (domain.PromptPreset, error) {
 	now := time.Now().UTC()
-	if _, err := r.db.ExecContext(ctx, `
+	res, err := r.db.ExecContext(ctx, `
 		UPDATE user_prompt_presets
 		SET name = $1, prompt_text = $2, updated_at = $3
-		WHERE id = $4
-	`, name, promptText, now, id); err != nil {
+		WHERE id = $4 AND user_id = $5
+	`, name, promptText, now, id, userID)
+	if err != nil {
 		return domain.PromptPreset{}, err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return domain.PromptPreset{}, sql.ErrNoRows
 	}
 	return r.Get(ctx, id)
 }
 
-func (r *PromptPresetRepository) Delete(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM user_prompt_presets WHERE id = $1`, id)
-	return err
+func (r *PromptPresetRepository) Delete(ctx context.Context, id, userID string) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM user_prompt_presets WHERE id = $1 AND user_id = $2`, id, userID)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }

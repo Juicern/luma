@@ -7,7 +7,7 @@
 The core flow:
 
 1. User selects a **prompt preset** (e.g. *Professional*, *Casual*, *CN → EN*).
-2. User optionally speaks a **temporary prompt** for this session.
+2. User optionally speaks a **temporary prompt** for this capture.
 3. User speaks the **main content**.
 4. Luma:
    - Transcribes audio to text using a speech-to-text model (e.g. Whisper via OpenAI).
@@ -27,13 +27,13 @@ The backend runs locally at first (single-user, local database), but should be d
 
 1. Let users **speak instead of type**, and get high-quality rewritten text.
 2. Support **multiple tone/style presets** per user (professional, casual, translation, etc.).
-3. Support a **temporary prompt** per session (spoken by voice).
+3. Support a **temporary prompt** per capture (spoken by voice).
 4. Support **multiple LLM providers and models** (e.g. OpenAI, Gemini).
 5. Allow users to configure and store **provider API keys** locally.
 6. Support a **clipboard context toggle**:
    - When enabled, the frontend reads text from the clipboard and sends it as “context” to Luma.
    - Luma uses this context to improve the rewrite (e.g. reply to an email, translate in the same style).
-7. Maintain a basic **session history** (what was spoken, what was generated).
+7. Provide a lightweight local **transcription history** so users can review or copy previous captures.
 
 ---
 
@@ -98,7 +98,7 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
   - A user-friendly name (e.g. “Professional”, “Casual”).
   - A `prompt_text` describing how Luma should rewrite (tone, style, language).
 - Luma must list a user’s presets so the frontend can display them.
-- User selects one preset for each session; its `id` is passed to the backend.
+- User selects one preset for each capture; its `id` is passed to the backend.
 
 ### FR2 – System Prompt
 
@@ -107,24 +107,16 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
 - The system prompt is editable (for power users or future admin UI).
 - It is combined with the selected preset and temporary prompt during LLM calls.
 
-### FR3 – Temporary Prompt (Per Session)
+### FR3 – Prompt Templates & Library
 
-- Users may provide a **temporary prompt** at the start of a session (typically via voice, but frontend can also send it as text).
-- Temporary prompt is stored in the `session`.
-- Temporary prompt affects only that session.
+- App ships with a few built-in templates (Default, Professional, Literal) exposed as quick chips.
+- Users can save, rename, and delete their own prompts (stored per account via the backend preset APIs).
+- Selecting a template/preset shows its text before applying it to a capture.
 
-### FR4 – Sessions and Messages
+### FR4 – Temporary Prompt (Per Capture)
 
-- Each **session** represents one rewrite flow (preset + temporary prompt + one or more messages).
-- Each **message** belongs to a session and represents:
-  - Original content transcription (“content” type).
-  - Rewritten result (“rewrite” type).
-- Backend must store:
-  - For content messages:
-    - `raw_text`
-  - For rewrite messages:
-    - `raw_text` (input text)
-    - `transformed_text` (LLM output)
+- Users may speak a one-off prompt (e.g., “Reply politely”) before the main audio.
+- Temporary prompts are captured client-side and attached to the transcription request but are not persisted in the database.
 
 ### FR5 – Voice Input and Transcription
 
@@ -176,17 +168,7 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
 
 - Context is optional. If not provided, rewrite is only based on content + prompts.
 
-### FR9 – History Retrieval
-
-- Backend can return:
-  - A list of recent sessions (with basic metadata).
-  - Full details for a session, including:
-    - preset used
-    - temporary prompt
-    - context_text
-    - messages (both content and rewrite)
-
-### FR10 – Configuration
+### FR9 – Configuration
 
 - Backend reads config from a file (e.g. `config.yaml`) and/or environment variables:
   - Server port
@@ -194,38 +176,37 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
   - Enabled providers
   - Logging level
 
-### FR11 – macOS Onboarding & Permissions
+### FR10 – macOS Onboarding & Permissions
 
 - When the macOS client launches for the first time it must:
   - Request microphone access via the system prompt (`AVAudioSession` / `AVCaptureDevice` APIs).
+  - Explain why audio input is required before presenting the system dialog.
+  - Provide a way to re-check permission status and deep-link to System Settings if the user previously denied access.
+- Future shortcuts that listen globally may require Accessibility permission; the UI should surface instructions if/when that becomes necessary.
 
-### FR12 – Authentication & Session Persistence
+### FR11 – Authentication & Session Persistence
 
 - Users authenticate with their Luma account (email + password) via the backend.
 - Backend issues a long-lived session cookie stored on the device; it is used instead of passing `user_id` in every request.
 - Frontend shows a lightweight login view (email/password fields) until the session is valid, then hides credentials and simply shows the signed-in account info.
 - On launch the app silently checks `/api/v1/session`; if the cookie is still valid the user stays logged in without re-entering credentials.
 - Logging out clears local caches (API keys, selected provider, hotkey state that depends on the user) and revokes the session on the server.
-  - Explain why audio input is required before presenting the system dialog.
-  - Provide a way to re-check permission status and deep-link to System Settings if the user previously denied access.
-- Future shortcuts that listen globally may require Accessibility permission; the UI should surface instructions if/when that becomes necessary.
 
 ### FR12 – Frontend Tips & Configuration Hub
 
 - The home view shows a checklist/tips column describing:
   1. Adding an API key.
   2. Writing/customizing a prompt.
-  3. Creating or resuming a session.
-  4. Recording temporary prompt vs. main content.
+  3. Reviewing the capture flow (temporary prompt vs. main content) and ensuring permissions are granted.
 - Users must be able to paste their provider API key, label it, and send it to the backend.
 - Prefill safe defaults and warn if the backend is unreachable.
 
-### FR13 – Session & Prompt Management UI
+### FR13 – Prompt Management UI
 
-- Surface both the active **system prompt** (pre-filled from backend defaults) and the **user prompt** text area so the user can edit either before recording.
-- Store any edits locally and (eventually) sync them to the backend when saving presets/system prompt overrides.
-- Show recent sessions in a table (name, prompt preview, timestamp, status). Selecting one should reveal details/history.
-- Provide clipboard-context toggle and optional text field to send manual context snippets.
+- Surface a **prompt library** made of default chips (Default/Professional/Literal) plus user-saved prompts.
+- Selecting a chip shows a preview sheet (name + text + copy/apply actions) so the UI stays compact.
+- Provide “Add Prompt” flow where the user names a prompt, edits the text, and saves it to the preset API.
+- Clipboard-context toggle and manual context field live in the same card for quick adjustments.
 
 ### FR14 – Keyboard Shortcuts
 
@@ -242,8 +223,8 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
   - Show a banner indicating “Listening for temporary prompt… tap shortcut again to finish”.
   - Once stopped, preview the transcript before sending it to the backend.
 - When the main-content shortcut fires:
-  - Similar UI but routed to the session’s primary transcription flow.
-- If the user never records a temporary prompt, the backend will rely on the system/preset prompts (current default rewrites chat-style).
+  - Similar UI but routed to the main transcription flow (no notion of server-side sessions).
+- If the user never records a temporary prompt, the backend relies solely on the system/preset prompts.
 
 ---
 
@@ -274,7 +255,7 @@ Wants to integrate Luma into their daily workflow (editor, email client) and use
   - Provider-specific LLM adapters
 - It should be easy to:
   - Add a new provider.
-  - Add new fields to prompts or sessions.
+  - Add new fields to prompts or authentication.
   - Swap SQLite for Postgres.
 
 ---

@@ -5,15 +5,21 @@ import SwiftUI
 import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
+import Carbon
 #endif
 
-struct SessionSummary: Identifiable, Hashable {
-    let id: UUID
-    var title: String
-    var promptPreview: String
-    var updatedAt: Date
-    var status: String
+#if os(macOS)
+extension NSEvent.ModifierFlags {
+    static let leftCommand = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELCMDKEYMASK))
+    static let rightCommand = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERCMDKEYMASK))
+    static let leftOption = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELALTKEYMASK))
+    static let rightOption = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERALTKEYMASK))
+    static let leftShift = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELSHIFTKEYMASK))
+    static let rightShift = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERSHIFTKEYMASK))
+    static let leftControl = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICELCTLKEYMASK))
+    static let rightControl = NSEvent.ModifierFlags(rawValue: UInt(NX_DEVICERCTLKEYMASK))
 }
+#endif
 
 struct UserProfile: Identifiable, Codable, Hashable {
     let id: String
@@ -33,21 +39,29 @@ struct RecordingShortcut: Hashable {
     #if os(macOS)
     init(key: String, modifiers: NSEvent.ModifierFlags) {
         self.key = key
-        self.modifiersRaw = modifiers.rawValue
+        self.modifiersRaw = RecordingShortcut.normalizeModifiers(modifiers).rawValue
     }
     #endif
 
     var displayText: String {
-        #if os(macOS)
+#if os(macOS)
         let flags = NSEvent.ModifierFlags(rawValue: modifiersRaw)
         var parts: [String] = []
-        if flags.contains(.command) { parts.append("⌘") }
-        if flags.contains(.option) { parts.append("⌥") }
-        if flags.contains(.shift) { parts.append("⇧") }
-        if flags.contains(.control) { parts.append("⌃") }
-        #else
+        if flags.contains(.leftCommand) { parts.append("⌘L") }
+        else if flags.contains(.rightCommand) { parts.append("⌘R") }
+        else if flags.contains(.command) { parts.append("⌘") }
+        if flags.contains(.leftOption) { parts.append("⌥L") }
+        else if flags.contains(.rightOption) { parts.append("⌥R") }
+        else if flags.contains(.option) { parts.append("⌥") }
+        if flags.contains(.leftShift) { parts.append("⇧L") }
+        else if flags.contains(.rightShift) { parts.append("⇧R") }
+        else if flags.contains(.shift) { parts.append("⇧") }
+        if flags.contains(.leftControl) { parts.append("⌃L") }
+        else if flags.contains(.rightControl) { parts.append("⌃R") }
+        else if flags.contains(.control) { parts.append("⌃") }
+#else
         let parts: [String] = []
-        #endif
+#endif
         return (parts + [key.uppercased()]).joined()
     }
 
@@ -59,16 +73,16 @@ struct RecordingShortcut: Hashable {
     var eventModifiers: SwiftUI.EventModifiers {
         var mods: SwiftUI.EventModifiers = []
         let flags = NSEvent.ModifierFlags(rawValue: modifiersRaw)
-        if flags.contains(.command) { mods.insert(.command) }
-        if flags.contains(.option) { mods.insert(.option) }
-        if flags.contains(.shift) { mods.insert(.shift) }
-        if flags.contains(.control) { mods.insert(.control) }
+        if flags.contains(.command) || flags.contains(.leftCommand) || flags.contains(.rightCommand) { mods.insert(.command) }
+        if flags.contains(.option) || flags.contains(.leftOption) || flags.contains(.rightOption) { mods.insert(.option) }
+        if flags.contains(.shift) || flags.contains(.leftShift) || flags.contains(.rightShift) { mods.insert(.shift) }
+        if flags.contains(.control) || flags.contains(.leftControl) || flags.contains(.rightControl) { mods.insert(.control) }
         return mods
     }
 
     var nsFlags: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifiersRaw) }
 
-    var carbonKeyCode: UInt32 {
+    private var carbonKeyCode: UInt32 {
         let uppercase = key.uppercased()
         if let code = RecordingShortcut.keyCodes[uppercase] {
             return code
@@ -76,14 +90,15 @@ struct RecordingShortcut: Hashable {
         return UInt32(kVK_ANSI_A)
     }
 
-    var carbonFlags: UInt32 {
-        var flags: UInt32 = 0
-        let nsFlags = NSEvent.ModifierFlags(rawValue: modifiersRaw)
-        if nsFlags.contains(.command) { flags |= UInt32(cmdKey) }
-        if nsFlags.contains(.option) { flags |= UInt32(optionKey) }
-        if nsFlags.contains(.shift) { flags |= UInt32(shiftKey) }
-        if nsFlags.contains(.control) { flags |= UInt32(controlKey) }
-        return flags
+    var cgKeyCode: CGKeyCode {
+        CGKeyCode(carbonKeyCode)
+    }
+
+    func matches(keyCode: CGKeyCode, flags eventFlags: NSEvent.ModifierFlags) -> Bool {
+        guard keyCode == cgKeyCode else { return false }
+        let normalizedRequired = RecordingShortcut.normalizeModifiers(NSEvent.ModifierFlags(rawValue: modifiersRaw))
+        let normalizedEvent = RecordingShortcut.normalizeModifiers(eventFlags)
+        return ModifierSignature(flags: normalizedEvent).satisfies(required: ModifierSignature(flags: normalizedRequired))
     }
 
     private static let keyCodes: [String: UInt32] = {
@@ -106,6 +121,76 @@ struct RecordingShortcut: Hashable {
         dict["."] = UInt32(kVK_ANSI_Period)
         return dict
     }()
+
+    static func normalizeModifiers(_ flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
+        var normalized = flags.intersection([
+            .command, .option, .shift, .control,
+            .leftCommand, .rightCommand,
+            .leftOption, .rightOption,
+            .leftShift, .rightShift,
+            .leftControl, .rightControl
+        ])
+        if normalized.contains(.leftCommand) || normalized.contains(.rightCommand) {
+            normalized.remove(.command)
+        }
+        if normalized.contains(.leftOption) || normalized.contains(.rightOption) {
+            normalized.remove(.option)
+        }
+        if normalized.contains(.leftShift) || normalized.contains(.rightShift) {
+            normalized.remove(.shift)
+        }
+        if normalized.contains(.leftControl) || normalized.contains(.rightControl) {
+            normalized.remove(.control)
+        }
+        return normalized
+    }
+
+    private struct ModifierSignature {
+        var anyCommand = false
+        var leftCommand = false
+        var rightCommand = false
+        var anyOption = false
+        var leftOption = false
+        var rightOption = false
+        var anyShift = false
+        var leftShift = false
+        var rightShift = false
+        var anyControl = false
+        var leftControl = false
+        var rightControl = false
+
+        init(flags: NSEvent.ModifierFlags) {
+            anyCommand = flags.contains(.command)
+            leftCommand = flags.contains(.leftCommand)
+            rightCommand = flags.contains(.rightCommand)
+            anyOption = flags.contains(.option)
+            leftOption = flags.contains(.leftOption)
+            rightOption = flags.contains(.rightOption)
+            anyShift = flags.contains(.shift)
+            leftShift = flags.contains(.leftShift)
+            rightShift = flags.contains(.rightShift)
+            anyControl = flags.contains(.control)
+            leftControl = flags.contains(.leftControl)
+            rightControl = flags.contains(.rightControl)
+        }
+
+        func satisfies(required: ModifierSignature) -> Bool {
+            func check(any: Bool, left: Bool, right: Bool, eventAny: Bool, eventLeft: Bool, eventRight: Bool) -> Bool {
+                if left && !eventLeft { return false }
+                if right && !eventRight { return false }
+                if any {
+                    if !(eventLeft || eventRight || eventAny) { return false }
+                } else if !left && !right {
+                    if eventLeft || eventRight || eventAny { return false }
+                }
+                return true
+            }
+            return check(any: required.anyCommand, left: required.leftCommand, right: required.rightCommand, eventAny: anyCommand, eventLeft: leftCommand, eventRight: rightCommand)
+                && check(any: required.anyOption, left: required.leftOption, right: required.rightOption, eventAny: anyOption, eventLeft: leftOption, eventRight: rightOption)
+                && check(any: required.anyShift, left: required.leftShift, right: required.rightShift, eventAny: anyShift, eventLeft: leftShift, eventRight: rightShift)
+                && check(any: required.anyControl, left: required.leftControl, right: required.rightControl, eventAny: anyControl, eventLeft: leftControl, eventRight: rightControl)
+        }
+    }
     #endif
 }
 
@@ -129,11 +214,13 @@ final class AppState: ObservableObject {
     @Published var apiKeys: [String: String] = [:]
     @Published var providerOptions = ["openai", "gemini"]
     @Published var selectedProvider: String = "openai" {
-        didSet { updateActiveAPIKey() }
+        didSet {
+            updateActiveAPIKey()
+            updateActiveModel()
+        }
     }
     @Published var userPrompt: String = "Write concise professional replies."
     @Published var systemPrompt: String = "Rewrite the transcript as an informal message..."
-    @Published var sessions: [SessionSummary] = []
     @Published var recordingMode: RecordingMode = .idle
     @Published var temporaryShortcut = RecordingShortcut(key: "R", modifiers: [.command, .option])
     @Published var mainShortcut = RecordingShortcut(key: "M", modifiers: [.option])
@@ -146,6 +233,39 @@ final class AppState: ObservableObject {
     @Published var latestPromptText: String = ""
     @Published var latestContentText: String = ""
     @Published var captureStatus: String = ""
+    @Published var pasteStatus: String = ""
+    @Published var accessibilityGranted: Bool = false
+    @Published var providerModels: [String: [String]] = [
+        "openai": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+        "gemini": ["gemini-1.5-pro", "gemini-1.5-flash"]
+    ]
+    @Published var selectedModel: String = ""
+    @Published var presets: [PromptPresetModel] = []
+    @Published var selectedPresetID: String?
+    @Published var presetStatus: String = ""
+    @Published var transcriptionHistory: [TranscriptionHistoryItem] = []
+    @Published var transcriptionSearch: String = ""
+    @Published var promptPreview: PromptPreviewState?
+    @Published var isAddPromptPresented = false
+    @Published var draftPromptName: String = ""
+    @Published var draftPromptText: String = ""
+    let defaultPromptTemplates: [PromptTemplate] = [
+        PromptTemplate(
+            name: "Default",
+            description: "Balanced friendly reply.",
+            text: "Rewrite the user's thoughts into a clear, friendly response. Keep it concise, positive, and easy to scan. Use short paragraphs, respond directly to the main question, and end with an encouraging tone."
+        ),
+        PromptTemplate(
+            name: "Professional",
+            description: "Formal, confident email tone.",
+            text: "Transform the draft into a polished professional reply. Use a confident, respectful tone, stay concise, and emphasize next steps or outcomes. Avoid slang, use full sentences, and keep the message ready to send as an email."
+        ),
+        PromptTemplate(
+            name: "Literal",
+            description: "Mirror user's words exactly.",
+            text: "Repeat the user's text verbatim with light cleanup. Fix obvious typos and punctuation, but do not change the meaning, tone, or add commentary. Output the cleaned transcript only."
+        )
+    ]
 
     private var recorder = AudioPermissionManager()
 #if os(macOS)
@@ -156,16 +276,18 @@ final class AppState: ObservableObject {
     private var audioRecorder: AVAudioRecorder?
     private var currentRecordingURL: URL?
     private var activeRecordingMode: RecordingMode?
+    private var lastRecordingStartedAt: Date?
 
     func bootstrap() {
-        sessions = demoSessions()
         requestMicrophonePermission()
         requestAccessibilityPermission()
 #if os(macOS)
         refreshClipboard()
+        refreshAccessibilityState()
 #endif
         rebindShortcuts()
         restoreSession()
+        updateActiveModel()
     }
 
     func requestMicrophonePermission() {
@@ -182,6 +304,7 @@ final class AppState: ObservableObject {
             captureStatus = "Log in to start recording."
             return
         }
+        lastRecordingStartedAt = Date()
         recordingMode = mode
         switch mode {
         case .temporaryPrompt:
@@ -267,18 +390,6 @@ final class AppState: ObservableObject {
         rebindShortcuts()
     }
 
-    private func demoSessions() -> [SessionSummary] {
-        (0..<3).map { index in
-            SessionSummary(
-                id: UUID(),
-                title: "Draft #\(index + 1)",
-                promptPreview: userPrompt,
-                updatedAt: Date().addingTimeInterval(Double(-index) * 3600),
-                status: index == 0 ? "Ready" : "Edited"
-            )
-        }
-    }
-
     func login() {
         guard let url = URL(string: "\(backendBaseURL)/api/v1/login") else { return }
         var request = URLRequest(url: url)
@@ -349,6 +460,7 @@ final class AppState: ObservableObject {
         loginStatus = ""
         loginEmail = user.email
         rebindShortcuts()
+        loadPresets()
     }
 
     private func logoutLocal() {
@@ -357,6 +469,12 @@ final class AppState: ObservableObject {
         isLoggedIn = false
         apiKeys = [:]
         apiKey = ""
+        presets = []
+        selectedPresetID = nil
+        presetStatus = ""
+        transcriptionHistory = []
+        promptPreview = nil
+        isAddPromptPresented = false
         rebindShortcuts()
     }
 
@@ -366,6 +484,8 @@ final class AppState: ObservableObject {
             let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
             AXIsProcessTrustedWithOptions(options)
             startAccessibilityPolling()
+        } else {
+            accessibilityGranted = true
         }
 #endif
     }
@@ -375,6 +495,18 @@ final class AppState: ObservableObject {
         let pasteboard = NSPasteboard.general
         if let string = pasteboard.string(forType: .string) {
             contextText = string
+        }
+    }
+
+    func openMicrophoneSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -388,8 +520,13 @@ final class AppState: ObservableObject {
             if AXIsProcessTrusted() {
                 timer.invalidate()
                 self.rebindShortcuts()
+                self.refreshAccessibilityState()
             }
         }
+    }
+
+    func refreshAccessibilityState() {
+        accessibilityGranted = AXIsProcessTrusted()
     }
 
     private func captureFrontmostApp() {
@@ -493,6 +630,14 @@ final class AppState: ObservableObject {
         apiKey = apiKeys[selectedProvider] ?? ""
     }
 
+    private func updateActiveModel() {
+        let models = providerModels[selectedProvider] ?? []
+        if models.contains(selectedModel) {
+            return
+        }
+        selectedModel = models.first ?? ""
+    }
+
     private func loadAPIKeys() {
         guard isLoggedIn, let url = URL(string: "\(backendBaseURL)/api/v1/api-keys") else {
             apiKeys = [:]
@@ -512,6 +657,138 @@ final class AppState: ObservableObject {
         }.resume()
     }
 
+    func loadPresets() {
+        guard isLoggedIn, !userID.isEmpty, let url = URL(string: "\(backendBaseURL)/api/v1/presets?user_id=\(userID)") else {
+            presets = []
+            selectedPresetID = nil
+            return
+        }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let data = data, let decoded = try? JSONDecoder().decode([PromptPresetModel].self, from: data) {
+                    self.presets = decoded
+                    if let currentID = self.selectedPresetID, decoded.contains(where: { $0.id == currentID }) {
+                        // keep current selection
+                    } else {
+                        self.selectedPresetID = nil
+                    }
+                }
+            }
+        }.resume()
+    }
+
+    func createPreset(name: String, text: String, completion: (() -> Void)? = nil) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            presetStatus = "Preset name required"
+            return
+        }
+        guard !trimmedText.isEmpty else {
+            presetStatus = "Prompt text required"
+            return
+        }
+        guard isLoggedIn, !userID.isEmpty else {
+            presetStatus = "Log in to save presets"
+            return
+        }
+        guard let url = URL(string: "\(backendBaseURL)/api/v1/presets") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = [
+            "user_id": userID,
+            "name": trimmedName,
+            "prompt_text": trimmedText
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error = error {
+                    self.presetStatus = "Failed: \(error.localizedDescription)"
+                    return
+                }
+                guard
+                    let response = response as? HTTPURLResponse,
+                    response.statusCode == 201,
+                    let data = data,
+                    let preset = try? JSONDecoder().decode(PromptPresetModel.self, from: data)
+                else {
+                    self.presetStatus = "Unexpected response"
+                    return
+                }
+                self.presets.insert(preset, at: 0)
+                self.selectedPresetID = preset.id
+                self.userPrompt = preset.promptText
+                self.presetStatus = "Preset saved"
+                completion?()
+            }
+        }.resume()
+    }
+
+    func deletePreset(_ preset: PromptPresetModel) {
+        guard isLoggedIn, !userID.isEmpty else {
+            presetStatus = "Log in to manage presets"
+            return
+        }
+        guard let url = URL(string: "\(backendBaseURL)/api/v1/presets/\(preset.id)?user_id=\(userID)") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error = error {
+                    self.presetStatus = "Delete failed: \(error.localizedDescription)"
+                    return
+                }
+                guard let http = response as? HTTPURLResponse, http.statusCode == 204 else {
+                    self.presetStatus = "Delete failed"
+                    return
+                }
+                self.presets.removeAll { $0.id == preset.id }
+                if self.selectedPresetID == preset.id {
+                    self.selectedPresetID = nil
+                }
+                self.presetStatus = "Preset removed"
+            }
+        }.resume()
+    }
+
+    func selectPreset(_ preset: PromptPresetModel) {
+        presentPreset(preset)
+    }
+
+    func presentPreset(_ preset: PromptPresetModel) {
+        promptPreview = PromptPreviewState(title: preset.name, text: preset.promptText, presetID: preset.id)
+    }
+
+    func presentTemplate(_ template: PromptTemplate) {
+        selectedPresetID = nil
+        promptPreview = PromptPreviewState(title: template.name, text: template.text, presetID: nil)
+    }
+
+    func applyPreview(_ preview: PromptPreviewState) {
+        userPrompt = preview.text
+        selectedPresetID = preview.presetID
+        presetStatus = "Using \(preview.title)"
+    }
+
+    func beginAddPrompt() {
+        draftPromptName = ""
+        draftPromptText = userPrompt
+        isAddPromptPresented = true
+    }
+
+    func submitNewPrompt() {
+        createPreset(name: draftPromptName, text: draftPromptText) { [weak self] in
+            self?.draftPromptName = ""
+            self?.draftPromptText = ""
+            self?.isAddPromptPresented = false
+        }
+    }
+
     func copyLatestPromptToClipboard() {
         copyResultToClipboard(latestPromptText)
     }
@@ -521,6 +798,7 @@ final class AppState: ObservableObject {
     }
 
     private func applyTranscription(_ text: String, mode: RecordingMode) {
+        let duration = recordingDuration()
         switch mode {
         case .temporaryPrompt:
             latestPromptText = text
@@ -533,6 +811,8 @@ final class AppState: ObservableObject {
         case .idle:
             captureStatus = "Capture complete."
         }
+        logTranscriptionHistory(text: text, mode: mode, duration: duration)
+        lastRecordingStartedAt = nil
     }
 
 #if os(macOS)
@@ -545,7 +825,14 @@ final class AppState: ObservableObject {
     }
 
     private func insertTextIntoFrontmostApp(_ text: String) {
-        guard AXIsProcessTrusted(), let target = pendingPasteTarget else { return }
+        guard AXIsProcessTrusted() else {
+            updatePasteStatus("Cannot paste: Accessibility permission not granted.")
+            return
+        }
+        guard let target = pendingPasteTarget else {
+            updatePasteStatus("Cannot paste: target application missing.")
+            return
+        }
         target.activate(options: [.activateIgnoringOtherApps])
         pendingPasteTarget = nil
         usleep(150000)
@@ -555,11 +842,13 @@ final class AppState: ObservableObject {
 
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+        updatePasteStatus("Clipboard staged for paste…")
 
         simulateCommandVPaste()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             self.restorePasteboard(from: snapshot)
+            self.updatePasteStatus("Paste attempt finished; clipboard restored.")
         }
     }
 
@@ -579,10 +868,14 @@ final class AppState: ObservableObject {
     private func restorePasteboard(from snapshot: [(NSPasteboard.PasteboardType, Data)]) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        guard !snapshot.isEmpty else { return }
+        guard !snapshot.isEmpty else {
+            updatePasteStatus("Clipboard was empty prior to paste; nothing to restore.")
+            return
+        }
         for (type, data) in snapshot {
             pasteboard.setData(data, forType: type)
         }
+        updatePasteStatus("Clipboard restored to previous content.")
     }
 
     private func simulateCommandVPaste() {
@@ -600,11 +893,40 @@ final class AppState: ObservableObject {
         vDown?.post(tap: .cghidEventTap)
         vUp?.post(tap: .cghidEventTap)
         cmdUp?.post(tap: .cghidEventTap)
+        updatePasteStatus("Simulated ⌘V for pasted result.")
+    }
+
+    private func updatePasteStatus(_ message: String) {
+        pasteStatus = message
+        NSLog("[LumaPaste] %@", message)
     }
 #else
     private func copyResultToClipboard(_ text: String) {}
     private func insertTextIntoFrontmostApp(_ text: String) {}
+    private func updatePasteStatus(_ message: String) {}
 #endif
+
+    private func recordingDuration() -> TimeInterval {
+        guard let start = lastRecordingStartedAt else { return 0 }
+        return Date().timeIntervalSince(start)
+    }
+
+    private func logTranscriptionHistory(text: String, mode: RecordingMode, duration: TimeInterval) {
+        let entry = TranscriptionHistoryItem(mode: mode, text: text, duration: duration, timestamp: Date())
+        transcriptionHistory.insert(entry, at: 0)
+        if transcriptionHistory.count > 100 {
+            transcriptionHistory.removeLast(transcriptionHistory.count - 100)
+        }
+    }
+
+#if os(macOS)
+    func copyTextToClipboard(_ text: String) {
+        copyResultToClipboard(text)
+    }
+#else
+    func copyTextToClipboard(_ text: String) {}
+#endif
+
 
 #if os(macOS)
     private func updateRecordingHUD() {
@@ -643,6 +965,66 @@ extension Data {
     mutating func appendString(_ string: String) {
         if let data = string.data(using: .utf8) {
             append(data)
+        }
+    }
+}
+
+struct PromptPresetModel: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+    let promptText: String
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case promptText = "prompt_text"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct TranscriptionHistoryItem: Identifiable {
+    let id = UUID()
+    let mode: RecordingMode
+    let text: String
+    let duration: TimeInterval
+    let timestamp: Date
+
+    var preview: String {
+        if text.count <= 80 {
+            return text
+        }
+        return String(text.prefix(80)) + "…"
+    }
+
+    var durationLabel: String {
+        String(format: "%.1fs", duration)
+    }
+}
+
+struct PromptTemplate: Identifiable {
+    let id = UUID()
+    let name: String
+    let description: String
+    let text: String
+}
+
+struct PromptPreviewState: Identifiable {
+    let id = UUID()
+    let title: String
+    let text: String
+    let presetID: String?
+}
+
+extension RecordingMode {
+    var displayName: String {
+        switch self {
+        case .temporaryPrompt:
+            return "Prompt"
+        case .mainContent:
+            return "Content"
+        case .idle:
+            return "Idle"
         }
     }
 }

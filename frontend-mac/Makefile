@@ -34,6 +34,7 @@ bundle: release
 	rm -rf $(APP_BUNDLE) $(DMG_ROOT); \
 	mkdir -p $$APP_ROOT/MacOS $$APP_ROOT/Resources $(DMG_ROOT); \
 	cp $$BIN_PATH $$APP_ROOT/MacOS/$(APP_NAME); \
+	cp ../image.png $$APP_ROOT/Resources/AppIcon.png; \
 	chmod +x $$APP_ROOT/MacOS/$(APP_NAME); \
 	printf '%s\n' \
 	'<?xml version="1.0" encoding="UTF-8"?>' \
@@ -42,6 +43,8 @@ bundle: release
 	'<dict>' \
 	'    <key>CFBundleExecutable</key>' \
 	'    <string>$(APP_NAME)</string>' \
+	'    <key>CFBundleIconFile</key>' \
+	'    <string>AppIcon.png</string>' \
 	'    <key>CFBundleIdentifier</key>' \
 	'    <string>com.juicern.luma</string>' \
 	'    <key>CFBundleName</key>' \

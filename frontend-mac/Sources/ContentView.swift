@@ -7,21 +7,23 @@ struct ContentView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        ZStack {
-            VStack {
-                if !state.microphoneAuthorized {
-                    PermissionGateView()
-                } else {
-                    MainDashboardView()
-                }
-            }
-            if !state.recordingIndicator.isEmpty {
-                RecordingOverlay(message: state.recordingIndicator)
-                    .transition(.opacity)
+        VStack {
+            if !state.microphoneAuthorized {
+                PermissionGateView()
+            } else {
+                MainDashboardView()
             }
         }
         .padding()
         .frame(minWidth: 900, minHeight: 600)
+        .sheet(item: $state.promptPreview) { preview in
+            PromptPreviewSheet(preview: preview)
+                .environmentObject(state)
+        }
+        .sheet(isPresented: $state.isAddPromptPresented) {
+            AddPromptSheet()
+                .environmentObject(state)
+        }
     }
 }
 
@@ -59,11 +61,12 @@ struct MainDashboardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     UserCard()
+                    PermissionStatusCard()
                     APIKeyCard()
                     ShortcutCard()
                     PromptCard()
                     RecordingControls()
-                    SessionList()
+                    TranscriptionHistoryCard()
                 }
             }
         }
@@ -147,6 +150,94 @@ struct UserCard: View {
     }
 }
 
+struct PermissionStatusCard: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Permissions")
+                    .font(.headline)
+                Spacer()
+                Button("Refresh") {
+#if os(macOS)
+                    state.refreshAccessibilityState()
+#endif
+                    state.requestMicrophonePermission()
+                }
+                .buttonStyle(.bordered)
+            }
+            PermissionStatusRow(
+                icon: "mic.fill",
+                title: "Microphone",
+                description: "Allows Luma to capture your voice.",
+                granted: state.microphoneAuthorized,
+                actionTitle: state.microphoneAuthorized ? "Open Settings" : "Grant",
+                action: {
+                    if state.microphoneAuthorized {
+                        state.openMicrophoneSettings()
+                    } else {
+                        state.requestMicrophonePermission()
+                    }
+                }
+            )
+#if os(macOS)
+            PermissionStatusRow(
+                icon: "keyboard.fill",
+                title: "Accessibility",
+                description: "Required for global shortcuts & auto-paste.",
+                granted: state.accessibilityGranted,
+                actionTitle: state.accessibilityGranted ? "Open Settings" : "Grant",
+                action: {
+                    if state.accessibilityGranted {
+                        state.openAccessibilitySettings()
+                    } else {
+                        state.requestAccessibilityPermission()
+                    }
+                }
+            )
+#endif
+        }
+        .padding()
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+struct PermissionStatusRow: View {
+    var icon: String
+    var title: String
+    var description: String
+    var granted: Bool
+    var actionTitle: String
+    var action: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundColor(granted ? .green : .orange)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline)
+                    .bold()
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(granted ? "Granted" : "Missing")
+                    .font(.caption)
+                    .foregroundColor(granted ? .green : .orange)
+            }
+            Spacer()
+            Button(actionTitle, action: action)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.primary.opacity(0.05))
+        )
+    }
+}
+
 struct APIKeyCard: View {
     @EnvironmentObject private var state: AppState
 
@@ -160,6 +251,14 @@ struct APIKeyCard: View {
                 }
             }
             .pickerStyle(.segmented)
+            if let models = state.providerModels[state.selectedProvider], !models.isEmpty {
+                Picker("Model", selection: $state.selectedModel) {
+                    ForEach(models, id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
             SecureField("sk-...", text: $state.apiKey)
                 .textFieldStyle(.roundedBorder)
                 .disabled(!state.isLoggedIn)
@@ -223,21 +322,68 @@ struct ShortcutRecorder: View {
 
 struct PromptCard: View {
     @EnvironmentObject private var state: AppState
+    private let columns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             Text("Prompt Composer")
                 .font(.headline)
-            Text("System Prompt")
+
+            Text("Quick Templates")
                 .font(.subheadline)
-            TextEditor(text: $state.systemPrompt)
-                .frame(minHeight: 80)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
-            Text("Your Prompt")
-                .font(.subheadline)
-            TextEditor(text: $state.userPrompt)
-                .frame(minHeight: 80)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(state.defaultPromptTemplates) { template in
+                    PromptChip(
+                        title: template.name,
+                        subtitle: template.description,
+                        isActive: false
+                    ) {
+                        state.presentTemplate(template)
+                    }
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Text("Saved Prompts")
+                    .font(.subheadline)
+                Spacer()
+                Button("Refresh") { state.loadPresets() }
+                    .disabled(!state.isLoggedIn)
+                Button {
+                    state.beginAddPrompt()
+                } label: {
+                    Label("Add Prompt", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!state.isLoggedIn)
+            }
+            if state.presets.isEmpty {
+                Text(state.isLoggedIn ? "No prompts yet. Add one to reuse your favorite instructions." : "Log in to manage prompts.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(state.presets) { preset in
+                        PromptChip(
+                            title: preset.name,
+                            subtitle: state.selectedPresetID == preset.id ? "Active" : "Tap to preview",
+                            isActive: state.selectedPresetID == preset.id
+                        ) {
+                            state.presentPreset(preset)
+                        }
+                    }
+                }
+            }
+
+            if !state.presetStatus.isEmpty {
+                Text(state.presetStatus)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Divider()
             Toggle("Include clipboard context", isOn: $state.clipboardEnabled)
             HStack(alignment: .top) {
                 TextField("Clipboard snippet", text: $state.contextText, axis: .vertical)
@@ -286,19 +432,10 @@ struct RecordingControls: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            if !state.latestPromptText.isEmpty {
-                TranscriptionPreview(
-                    title: "Last Temporary Prompt",
-                    text: state.latestPromptText,
-                    copyAction: state.copyLatestPromptToClipboard
-                )
-            }
-            if !state.latestContentText.isEmpty {
-                TranscriptionPreview(
-                    title: "Last Main Content",
-                    text: state.latestContentText,
-                    copyAction: state.copyLatestContentToClipboard
-                )
+            if !state.pasteStatus.isEmpty {
+                Text(state.pasteStatus)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
         }
         .padding()
@@ -314,73 +451,65 @@ struct RecordingControls: View {
     }
 }
 
-struct SessionList: View {
+struct TranscriptionHistoryCard: View {
     @EnvironmentObject private var state: AppState
-    private let formatter: DateFormatter = {
-        let df = DateFormatter()
-        df.dateStyle = .short
-        df.timeStyle = .short
-        return df
-    }()
+
+    private var filteredHistory: [TranscriptionHistoryItem] {
+        let query = state.transcriptionSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return state.transcriptionHistory }
+        return state.transcriptionHistory.filter { $0.text.localizedCaseInsensitiveContains(query) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Sessions")
+                Text("Transcription History")
                     .font(.headline)
                 Spacer()
-                Button("New Session") {
-                    let session = SessionSummary(
-                        id: UUID(),
-                        title: "Session \(state.sessions.count + 1)",
-                        promptPreview: state.userPrompt,
-                        updatedAt: Date(),
-                        status: "Recording"
-                    )
-                    state.sessions.insert(session, at: 0)
-                }
+                TextField("Search history", text: $state.transcriptionSearch)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 240)
             }
-            Table(state.sessions) {
-                TableColumn("Title", value: \.title)
-                TableColumn("Prompt") { session in
-                    Text(session.promptPreview.prefix(40) + (session.promptPreview.count > 40 ? "…" : ""))
-                }
-                TableColumn("Updated") { session in
-                    Text(formatter.string(from: session.updatedAt))
-                }
-                TableColumn("Status", value: \.status)
+            if !state.latestPromptText.isEmpty {
+                TranscriptionPreview(
+                    title: "Last Temporary Prompt",
+                    text: state.latestPromptText,
+                    copyAction: state.copyLatestPromptToClipboard
+                )
             }
-            .frame(minHeight: 160)
+            if !state.latestContentText.isEmpty {
+                TranscriptionPreview(
+                    title: "Last Main Content",
+                    text: state.latestContentText,
+                    copyAction: state.copyLatestContentToClipboard
+                )
+            }
+            if filteredHistory.isEmpty {
+                Text("No transcriptions captured yet.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                Table(filteredHistory) {
+                    TableColumn("When") { entry in
+                        Text(entry.timestamp, style: .time)
+                            .font(.caption)
+                    }
+                    TableColumn("Mode") { entry in
+                        Text(entry.mode.displayName)
+                    }
+                    TableColumn("Duration") { entry in
+                        Text(entry.durationLabel)
+                    }
+                    TableColumn("Preview", value: \.preview)
+                    TableColumn("Actions") { entry in
+                        Button("Copy") { state.copyTextToClipboard(entry.text) }
+                    }
+                }
+                .frame(minHeight: 200)
+            }
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
-    }
-}
-
-extension SessionSummary {
-    var titleKey: LocalizedStringKey { LocalizedStringKey(title) }
-}
-
-struct RecordingOverlay: View {
-    var message: String
-
-    var body: some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .scaleEffect(1.2)
-                    Text(message)
-                        .font(.headline)
-                }
-                .padding()
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                Spacer()
-            }
-            Spacer()
-        }
     }
 }
 
@@ -412,6 +541,106 @@ struct TranscriptionPreview: View {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(Color.primary.opacity(0.05))
                 )
+        }
+    }
+}
+
+struct PromptChip: View {
+    var title: String
+    var subtitle: String?
+    var isActive: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline)
+                    .bold()
+                if let subtitle = subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(isActive ? Color.green.opacity(0.2) : Color.primary.opacity(0.05))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct PromptPreviewSheet: View {
+    @EnvironmentObject private var state: AppState
+    var preview: PromptPreviewState
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(preview.title)
+                    .font(.title2)
+                    .bold()
+                ScrollView {
+                    Text(preview.text)
+                        .font(.body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HStack {
+                    Button("Copy") { state.copyTextToClipboard(preview.text) }
+                    Spacer()
+                    Button("Use Prompt") {
+                        state.applyPreview(preview)
+                        state.promptPreview = nil
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { state.promptPreview = nil }
+                }
+            }
+        }
+    }
+}
+
+struct AddPromptSheet: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("Prompt name", text: $state.draftPromptName)
+                }
+                Section("Prompt Text") {
+                    TextEditor(text: $state.draftPromptText)
+                        .frame(minHeight: 160)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        state.isAddPromptPresented = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { state.submitNewPrompt() }
+                        .disabled(state.draftPromptName.trimmingCharacters(in: .whitespaces).isEmpty ||
+                                  state.draftPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .onAppear {
+                if state.draftPromptText.isEmpty {
+                    state.draftPromptText = state.userPrompt
+                }
+            }
         }
     }
 }
@@ -460,8 +689,8 @@ struct ShortcutCaptureField: NSViewRepresentable {
 
         override func keyDown(with event: NSEvent) {
             guard let chars = event.charactersIgnoringModifiers, let char = chars.uppercased().first else { return }
-            let filtered = event.modifierFlags.intersection([.command, .option, .shift, .control])
-            let shortcut = RecordingShortcut(key: String(char), modifiers: filtered)
+            let normalized = RecordingShortcut.normalizeModifiers(event.modifierFlags)
+            let shortcut = RecordingShortcut(key: String(char), modifiers: normalized)
             stringValue = shortcut.displayText
             onShortcut?(shortcut)
         }

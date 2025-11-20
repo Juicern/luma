@@ -9,8 +9,6 @@ import (
 	"github.com/Juicern/luma/internal/repository"
 )
 
-const localUserID = "local-user"
-
 type PromptService struct {
 	systemRepo *repository.SystemPromptRepository
 	presetRepo *repository.PromptPresetRepository
@@ -50,20 +48,20 @@ func (s *PromptService) UpdateSystemPrompt(ctx context.Context, text string) (do
 	return s.systemRepo.Upsert(ctx, text)
 }
 
-func (s *PromptService) ListPresets(ctx context.Context) ([]domain.PromptPreset, error) {
-	return s.presetRepo.List(ctx, localUserID)
+func (s *PromptService) ListPresets(ctx context.Context, userID string) ([]domain.PromptPreset, error) {
+	return s.presetRepo.List(ctx, userID)
 }
 
-func (s *PromptService) CreatePreset(ctx context.Context, name, text string) (domain.PromptPreset, error) {
-	return s.presetRepo.Create(ctx, localUserID, name, text)
+func (s *PromptService) CreatePreset(ctx context.Context, userID, name, text string) (domain.PromptPreset, error) {
+	return s.presetRepo.Create(ctx, userID, name, text)
 }
 
-func (s *PromptService) UpdatePreset(ctx context.Context, id, name, text string) (domain.PromptPreset, error) {
-	return s.presetRepo.Update(ctx, id, name, text)
+func (s *PromptService) UpdatePreset(ctx context.Context, id, userID, name, text string) (domain.PromptPreset, error) {
+	return s.presetRepo.Update(ctx, id, userID, name, text)
 }
 
-func (s *PromptService) DeletePreset(ctx context.Context, id string) error {
-	return s.presetRepo.Delete(ctx, id)
+func (s *PromptService) DeletePreset(ctx context.Context, id, userID string) error {
+	return s.presetRepo.Delete(ctx, id, userID)
 }
 
 func (s *PromptService) GetPreset(ctx context.Context, id string) (domain.PromptPreset, error) {
