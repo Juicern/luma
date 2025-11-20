@@ -8,3 +8,4 @@ frontend-mac/.swiftpm/
 frontend-mac/.DS_Store
 dist/
 docs/
+luma.pem
