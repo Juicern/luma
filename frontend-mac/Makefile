@@ -63,6 +63,8 @@ bundle: release
 	'    <string>Luma needs microphone access to capture prompts and content.</string>' \
 	'    <key>NSApplicationSupportsAutomaticGraphicsSwitching</key>' \
 	'    <true/>' \
+	'    <key>LumaBackendURL</key>' \
+	'    <string>http://35.175.191.70:8080</string>' \
 	'</dict>' \
 	'</plist>' \
 	> $$APP_ROOT/Info.plist
