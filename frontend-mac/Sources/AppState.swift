@@ -65,6 +65,50 @@ struct RecordingShortcut: Hashable {
         return (parts + [key.uppercased()]).joined()
     }
 
+#if os(macOS)
+    var descriptiveLabel: String {
+        let flags = NSEvent.ModifierFlags(rawValue: modifiersRaw)
+        var names: [String] = []
+
+        func appendIfPresent(_ flag: NSEvent.ModifierFlags, name: String) {
+            if flags.contains(flag) {
+                names.append(name)
+            }
+        }
+
+        appendIfPresent(.leftCommand, name: "Left Command")
+        appendIfPresent(.rightCommand, name: "Right Command")
+        if names.filter({ $0.contains("Command") }).isEmpty && flags.contains(.command) {
+            names.append("Command")
+        }
+
+        appendIfPresent(.leftOption, name: "Left Option")
+        appendIfPresent(.rightOption, name: "Right Option")
+        if names.filter({ $0.contains("Option") }).isEmpty && flags.contains(.option) {
+            names.append("Option")
+        }
+
+        appendIfPresent(.leftShift, name: "Left Shift")
+        appendIfPresent(.rightShift, name: "Right Shift")
+        if names.filter({ $0.contains("Shift") }).isEmpty && flags.contains(.shift) {
+            names.append("Shift")
+        }
+
+        appendIfPresent(.leftControl, name: "Left Control")
+        appendIfPresent(.rightControl, name: "Right Control")
+        if names.filter({ $0.contains("Control") }).isEmpty && flags.contains(.control) {
+            names.append("Control")
+        }
+
+        if names.isEmpty {
+            return key.uppercased()
+        }
+        return "[" + names.joined(separator: "] + [") + "] + " + key.uppercased()
+    }
+#else
+    var descriptiveLabel: String { key.uppercased() }
+#endif
+
     #if os(macOS)
     var keyEquivalent: KeyEquivalent {
         KeyEquivalent(Character(key.lowercased()))
@@ -200,6 +244,17 @@ enum RecordingMode {
     case mainContent
 }
 
+enum DashboardPanel: String, CaseIterable, Identifiable {
+    case guide = "User Guide"
+    case account = "Account"
+    case permissions = "Permission & Shortcuts"
+    case prompts = "Prompts"
+    case history = "History"
+    case model = "Models & Keys"
+
+    var id: String { rawValue }
+}
+
 final class AppState: ObservableObject {
     @Published var microphoneAuthorized = false
     @Published var backendBaseURL = "http://localhost:8080"
@@ -209,6 +264,11 @@ final class AppState: ObservableObject {
     @Published var loginPassword: String = ""
     @Published var loginStatus: String = ""
     @Published var isLoggedIn: Bool = false
+    @Published var isRegistering: Bool = false
+    @Published var registrationName: String = ""
+    @Published var registrationEmail: String = ""
+    @Published var registrationPassword: String = ""
+    @Published var registrationStatus: String = ""
     @Published var apiKey: String = ""
     @Published var apiKeyStatus: String = ""
     @Published var apiKeys: [String: String] = [:]
@@ -232,6 +292,7 @@ final class AppState: ObservableObject {
     @Published var recordingIndicator: String = ""
     @Published var latestPromptText: String = ""
     @Published var latestContentText: String = ""
+    @Published var pendingTemporaryPrompt: String?
     @Published var captureStatus: String = ""
     @Published var pasteStatus: String = ""
     @Published var accessibilityGranted: Bool = false
@@ -241,29 +302,37 @@ final class AppState: ObservableObject {
     ]
     @Published var selectedModel: String = ""
     @Published var presets: [PromptPresetModel] = []
+    @Published var templateOverrides: [String: PromptPresetModel] = [:]
     @Published var selectedPresetID: String?
+    @Published var activeTemplateKey: String?
     @Published var presetStatus: String = ""
     @Published var transcriptionHistory: [TranscriptionHistoryItem] = []
     @Published var transcriptionSearch: String = ""
+    @Published var selectedPanel: DashboardPanel = .guide
     @Published var promptPreview: PromptPreviewState?
     @Published var isAddPromptPresented = false
+    @Published var editingTemplateKey: String?
+    @Published var editingPresetID: String?
     @Published var draftPromptName: String = ""
     @Published var draftPromptText: String = ""
     let defaultPromptTemplates: [PromptTemplate] = [
         PromptTemplate(
+            key: "default",
             name: "Default",
             description: "Balanced friendly reply.",
-            text: "Rewrite the user's thoughts into a clear, friendly response. Keep it concise, positive, and easy to scan. Use short paragraphs, respond directly to the main question, and end with an encouraging tone."
+            defaultText: "Rewrite the user's thoughts into a clear, friendly response. Keep it concise, positive, and easy to scan. Use short paragraphs, respond directly to the main question, and end with an encouraging tone."
         ),
         PromptTemplate(
+            key: "professional",
             name: "Professional",
             description: "Formal, confident email tone.",
-            text: "Transform the draft into a polished professional reply. Use a confident, respectful tone, stay concise, and emphasize next steps or outcomes. Avoid slang, use full sentences, and keep the message ready to send as an email."
+            defaultText: "Transform the draft into a polished professional reply. Use a confident, respectful tone, stay concise, and emphasize next steps or outcomes. Avoid slang, use full sentences, and keep the message ready to send as an email."
         ),
         PromptTemplate(
+            key: "literal",
             name: "Literal",
             description: "Mirror user's words exactly.",
-            text: "Repeat the user's text verbatim with light cleanup. Fix obvious typos and punctuation, but do not change the meaning, tone, or add commentary. Output the cleaned transcript only."
+            defaultText: "Repeat the user's text verbatim with light cleanup. Fix obvious typos and punctuation, but do not change the meaning, tone, or add commentary. Output the cleaned transcript only."
         )
     ]
 
@@ -272,13 +341,17 @@ final class AppState: ObservableObject {
     private let shortcutManager = ShortcutManager.shared
     private var accessibilityTimer: Timer?
     private var pendingPasteTarget: NSRunningApplication?
+    private var pendingCancelDeadline: Date?
+    private var cancelResetWorkItem: DispatchWorkItem?
 #endif
     private var audioRecorder: AVAudioRecorder?
     private var currentRecordingURL: URL?
     private var activeRecordingMode: RecordingMode?
     private var lastRecordingStartedAt: Date?
+    private var pendingContentJob: PendingContentJob?
 
     func bootstrap() {
+        applyBackendOverride()
         requestMicrophonePermission()
         requestAccessibilityPermission()
 #if os(macOS)
@@ -288,6 +361,18 @@ final class AppState: ObservableObject {
         rebindShortcuts()
         restoreSession()
         updateActiveModel()
+    }
+
+    private func applyBackendOverride() {
+#if os(macOS)
+        if let bundleURL = Bundle.main.object(forInfoDictionaryKey: "LumaBackendURL") as? String, !bundleURL.isEmpty {
+            backendBaseURL = bundleURL
+            return
+        }
+#endif
+        if let envURL = ProcessInfo.processInfo.environment["LUMA_BACKEND_URL"], !envURL.isEmpty {
+            backendBaseURL = envURL
+        }
     }
 
     func requestMicrophonePermission() {
@@ -304,27 +389,25 @@ final class AppState: ObservableObject {
             captureStatus = "Log in to start recording."
             return
         }
+#if os(macOS)
+        pendingCancelDeadline = nil
+        cancelResetWorkItem?.cancel()
+        cancelResetWorkItem = nil
+#endif
         lastRecordingStartedAt = Date()
         recordingMode = mode
-        switch mode {
-        case .temporaryPrompt:
-            recordingIndicator = "Listening for temporary prompt…"
-            captureStatus = "Recording temporary prompt…"
-        case .mainContent:
-            recordingIndicator = "Listening for main content…"
-            captureStatus = "Recording main content…"
-        case .idle:
-            recordingIndicator = ""
-        }
+        recordingIndicator = indicatorText(for: mode)
+        captureStatus = captureStatusText(for: mode)
         updateRecordingHUD()
         activeRecordingMode = mode
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("luma-\(UUID().uuidString).m4a")
         currentRecordingURL = fileURL
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44100,
+            AVSampleRateKey: 16000,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            AVEncoderBitRateKey: 32000,
+            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
         ]
         do {
             audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
@@ -337,6 +420,11 @@ final class AppState: ObservableObject {
     }
 
     func stopRecording() {
+#if os(macOS)
+        pendingCancelDeadline = nil
+        cancelResetWorkItem?.cancel()
+        cancelResetWorkItem = nil
+#endif
         recordingMode = .idle
         recordingIndicator = ""
         captureStatus = "Processing audio…"
@@ -345,8 +433,10 @@ final class AppState: ObservableObject {
         audioRecorder = nil
         let mode = activeRecordingMode
         activeRecordingMode = nil
+        let duration = recordingDuration()
+        lastRecordingStartedAt = nil
         if let url = currentRecordingURL, let mode = mode {
-            uploadRecording(fileURL: url, mode: mode)
+            uploadRecording(fileURL: url, mode: mode, duration: duration)
         }
         currentRecordingURL = nil
     }
@@ -421,6 +511,53 @@ final class AppState: ObservableObject {
         }.resume()
     }
 
+    func registerUser() {
+        let trimmedName = registrationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedEmail = registrationEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !trimmedEmail.isEmpty, !registrationPassword.isEmpty else {
+            registrationStatus = "Name, email, and password are required"
+            return
+        }
+        guard let url = URL(string: "\(backendBaseURL)/api/v1/users") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = [
+            "name": trimmedName,
+            "email": trimmedEmail,
+            "password": registrationPassword
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error = error {
+                    self.registrationStatus = "Sign up failed: \(error.localizedDescription)"
+                    return
+                }
+                guard
+                    let http = response as? HTTPURLResponse,
+                    let data = data,
+                    http.statusCode == 200 || http.statusCode == 201,
+                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                    let id = json["id"] as? String
+                else {
+                    self.registrationStatus = "Sign up failed"
+                    return
+                }
+                self.registrationStatus = "Account created!"
+                self.registrationName = ""
+                self.registrationEmail = ""
+                self.registrationPassword = ""
+                self.loginEmail = trimmedEmail
+                self.loginPassword = payload["password"] as? String ?? ""
+                self.isRegistering = false
+                self.login()
+                self.userID = id
+            }
+        }.resume()
+    }
+
     func restoreSession() {
         guard let url = URL(string: "\(backendBaseURL)/api/v1/session") else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
@@ -461,6 +598,7 @@ final class AppState: ObservableObject {
         loginEmail = user.email
         rebindShortcuts()
         loadPresets()
+        loadTranscriptionHistory()
     }
 
     private func logoutLocal() {
@@ -470,11 +608,19 @@ final class AppState: ObservableObject {
         apiKeys = [:]
         apiKey = ""
         presets = []
+        templateOverrides = [:]
         selectedPresetID = nil
+        activeTemplateKey = nil
         presetStatus = ""
         transcriptionHistory = []
         promptPreview = nil
         isAddPromptPresented = false
+        editingTemplateKey = nil
+        editingPresetID = nil
+        pendingContentJob = nil
+        pendingTemporaryPrompt = nil
+        draftPromptName = ""
+        draftPromptText = ""
         rebindShortcuts()
     }
 
@@ -546,7 +692,7 @@ final class AppState: ObservableObject {
         DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
     }
 
-    private func uploadRecording(fileURL: URL, mode: RecordingMode) {
+    private func uploadRecording(fileURL: URL, mode: RecordingMode, duration: TimeInterval) {
         guard !userID.isEmpty, let url = URL(string: "\(backendBaseURL)/api/v1/transcriptions") else {
             captureStatus = "Login required to upload audio."
             return
@@ -557,15 +703,35 @@ final class AppState: ObservableObject {
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         var body = Data()
-        body.appendString("--\(boundary)\r\n")
-        body.appendString("Content-Disposition: form-data; name=\"mode\"\r\n\r\n\(mode == .temporaryPrompt ? "prompt" : "content")\r\n")
-        body.appendString("--\(boundary)\r\n")
-        body.appendString("Content-Disposition: form-data; name=\"provider\"\r\n\r\n\(selectedProvider)\r\n")
+        func appendField(_ name: String, _ value: String) {
+            body.appendString("--\(boundary)\r\n")
+            body.appendString("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
+        }
+        appendField("mode", mode == .temporaryPrompt ? "prompt" : "content")
+        appendField("duration_seconds", String(format: "%.2f", duration))
+        appendField("provider", selectedProvider)
+        if !selectedModel.isEmpty {
+            appendField("model", selectedModel)
+        }
+        if let presetID = selectedPresetID {
+            appendField("preset_id", presetID)
+        }
+        appendField("preset_text", userPrompt)
+        if let tempPrompt = pendingTemporaryPrompt, !tempPrompt.isEmpty {
+            appendField("temporary_prompt", tempPrompt)
+            pendingTemporaryPrompt = nil
+        }
+        let contextPayload = clipboardEnabled ? contextText : ""
+        if !contextPayload.isEmpty {
+            appendField("context_text", contextPayload)
+        }
         body.appendString("--\(boundary)\r\n")
         body.appendString("Content-Disposition: form-data; name=\"audio\"; filename=\"recording.m4a\"\r\n")
         body.appendString("Content-Type: audio/m4a\r\n\r\n")
         body.append(audioData)
         body.appendString("\r\n--\(boundary)--\r\n")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
         URLSession.shared.uploadTask(with: request, from: body) { [weak self] data, response, error in
             defer { try? FileManager.default.removeItem(at: fileURL) }
             DispatchQueue.main.async {
@@ -590,24 +756,42 @@ final class AppState: ObservableObject {
                 }
                 guard
                     let data = data,
-                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                    let transcription = json["transcription"] as? String
+                    let payload = try? decoder.decode(TranscriptionLogResponse.self, from: data)
                 else {
                     self.captureStatus = "Unable to parse transcription response"
                     return
                 }
-                self.applyTranscription(transcription, mode: mode)
+                let durationValue = payload.durationSeconds ?? duration
+                let finalText = payload.effectiveText ?? payload.transcription
+                let historyItem = TranscriptionHistoryItem(response: payload, finalText: finalText)
+                if mode == .mainContent && payload.effectiveText == nil {
+                    self.pendingContentJob = PendingContentJob(id: payload.id, duration: durationValue)
+                    self.replaceHistoryEntry(historyItem)
+                    self.captureStatus = "Transcribed. Generating rewrite…"
+                    self.scheduleTranscriptionPoll(id: payload.id, attempt: 0)
+                } else {
+                    self.applyTranscription(finalText, mode: mode, duration: durationValue, historyEntry: historyItem)
+                }
             }
         }.resume()
     }
 
     private func rebindShortcuts() {
 #if os(macOS)
-        shortcutManager.configure(temporary: temporaryShortcut, main: mainShortcut) { [weak self] mode in
-            DispatchQueue.main.async {
-                self?.handleShortcut(mode: mode)
+        shortcutManager.configure(
+            temporary: temporaryShortcut,
+            main: mainShortcut,
+            cancel: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.handleEscapePress()
+                }
+            },
+            handler: { [weak self] mode in
+                DispatchQueue.main.async {
+                    self?.handleShortcut(mode: mode)
+                }
             }
-        }
+        )
 #endif
     }
 
@@ -623,6 +807,48 @@ final class AppState: ObservableObject {
             captureFrontmostApp()
             startRecording(mode)
         }
+    }
+
+    private func cancelActiveRecording() {
+        pendingCancelDeadline = nil
+        cancelResetWorkItem?.cancel()
+        cancelResetWorkItem = nil
+        recordingMode = .idle
+        recordingIndicator = ""
+        captureStatus = "Recording cancelled."
+        updateRecordingHUD()
+        audioRecorder?.stop()
+        audioRecorder = nil
+        if let url = currentRecordingURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        currentRecordingURL = nil
+        activeRecordingMode = nil
+        lastRecordingStartedAt = nil
+    }
+
+    private func handleEscapePress() {
+        guard recordingMode != .idle else { return }
+        let now = Date()
+        if let deadline = pendingCancelDeadline, now <= deadline {
+            cancelActiveRecording()
+            return
+        }
+        pendingCancelDeadline = now.addingTimeInterval(3)
+        cancelResetWorkItem?.cancel()
+        captureStatus = "Press ESC again within 3s to cancel recording."
+        recordingIndicator = "Press ESC again to cancel recording…"
+        updateRecordingHUD()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let deadline = self.pendingCancelDeadline else { return }
+            if Date() >= deadline {
+                self.pendingCancelDeadline = nil
+                self.restoreRecordingIndicatorState()
+            }
+        }
+        cancelResetWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: workItem)
     }
 #endif
 
@@ -661,14 +887,25 @@ final class AppState: ObservableObject {
         guard isLoggedIn, !userID.isEmpty, let url = URL(string: "\(backendBaseURL)/api/v1/presets?user_id=\(userID)") else {
             presets = []
             selectedPresetID = nil
+            templateOverrides = [:]
             return
         }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let data = data, let decoded = try? JSONDecoder().decode([PromptPresetModel].self, from: data) {
-                    self.presets = decoded
-                    if let currentID = self.selectedPresetID, decoded.contains(where: { $0.id == currentID }) {
+                    var overrides: [String: PromptPresetModel] = [:]
+                    var custom: [PromptPresetModel] = []
+                    for preset in decoded {
+                        if let key = preset.templateKey, !key.isEmpty {
+                            overrides[key] = preset
+                        } else {
+                            custom.append(preset)
+                        }
+                    }
+                    self.templateOverrides = overrides
+                    self.presets = custom
+                    if let currentID = self.selectedPresetID, custom.contains(where: { $0.id == currentID }) {
                         // keep current selection
                     } else {
                         self.selectedPresetID = nil
@@ -678,7 +915,33 @@ final class AppState: ObservableObject {
         }.resume()
     }
 
-    func createPreset(name: String, text: String, completion: (() -> Void)? = nil) {
+    func loadTranscriptionHistory() {
+        guard isLoggedIn, !userID.isEmpty else {
+            transcriptionHistory = []
+            return
+        }
+        var components = URLComponents(string: "\(backendBaseURL)/api/v1/transcriptions")
+        components?.queryItems = [
+            URLQueryItem(name: "user_id", value: userID),
+            URLQueryItem(name: "limit", value: "100")
+        ]
+        guard let url = components?.url else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard let data = data, let responses = try? decoder.decode([TranscriptionLogResponse].self, from: data) else {
+                    return
+                }
+                self.transcriptionHistory = responses.map { TranscriptionHistoryItem(response: $0, finalText: $0.effectiveText ?? $0.transcription) }
+            }
+        }.resume()
+    }
+
+    func createPreset(name: String, text: String, templateKey: String? = nil, completion: (() -> Void)? = nil) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
@@ -697,11 +960,14 @@ final class AppState: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "user_id": userID,
             "name": trimmedName,
             "prompt_text": trimmedText
         ]
+        if let templateKey = templateKey {
+            payload["template_key"] = templateKey
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
@@ -719,11 +985,53 @@ final class AppState: ObservableObject {
                     self.presetStatus = "Unexpected response"
                     return
                 }
-                self.presets.insert(preset, at: 0)
-                self.selectedPresetID = preset.id
-                self.userPrompt = preset.promptText
-                self.presetStatus = "Preset saved"
+                self.handlePresetUpsertResponse(preset)
+                self.presetStatus = templateKey == nil ? "Preset saved" : "\(trimmedName) updated"
                 completion?()
+            }
+        }.resume()
+    }
+
+    func updatePreset(presetID: String, name: String, text: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !trimmedText.isEmpty else {
+            presetStatus = "Name and prompt text are required"
+            return
+        }
+        guard isLoggedIn, !userID.isEmpty else {
+            presetStatus = "Log in to update prompts"
+            return
+        }
+        guard let url = URL(string: "\(backendBaseURL)/api/v1/presets/\(presetID)") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = [
+            "user_id": userID,
+            "name": trimmedName,
+            "prompt_text": trimmedText
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error = error {
+                    self.presetStatus = "Update failed: \(error.localizedDescription)"
+                    return
+                }
+                guard
+                    let response = response as? HTTPURLResponse,
+                    response.statusCode == 200,
+                    let data = data,
+                    let preset = try? JSONDecoder().decode(PromptPresetModel.self, from: data)
+                else {
+                    self.presetStatus = "Unexpected response"
+                    return
+                }
+                self.handlePresetUpsertResponse(preset)
+                self.presetStatus = "\(trimmedName) updated"
+                self.resetPromptDrafts()
             }
         }.resume()
     }
@@ -747,13 +1055,52 @@ final class AppState: ObservableObject {
                     self.presetStatus = "Delete failed"
                     return
                 }
-                self.presets.removeAll { $0.id == preset.id }
-                if self.selectedPresetID == preset.id {
-                    self.selectedPresetID = nil
+                if let key = preset.templateKey {
+                    self.templateOverrides.removeValue(forKey: key)
+                    if self.activeTemplateKey == key {
+                        self.activeTemplateKey = nil
+                    }
+                } else {
+                    self.presets.removeAll { $0.id == preset.id }
+                    if self.selectedPresetID == preset.id {
+                        self.selectedPresetID = nil
+                    }
                 }
                 self.presetStatus = "Preset removed"
             }
         }.resume()
+    }
+
+    private func handlePresetUpsertResponse(_ preset: PromptPresetModel) {
+        if let key = preset.templateKey, !key.isEmpty {
+            templateOverrides[key] = preset
+            activeTemplateKey = key
+            selectedPresetID = nil
+        } else {
+            if let index = presets.firstIndex(where: { $0.id == preset.id }) {
+                presets[index] = preset
+            } else {
+                presets.insert(preset, at: 0)
+            }
+            selectedPresetID = preset.id
+        }
+        userPrompt = preset.promptText
+    }
+
+    func templateText(_ template: PromptTemplate) -> String {
+        templateOverrides[template.key]?.promptText ?? template.defaultText
+    }
+
+    func templateDisplayName(_ template: PromptTemplate) -> String {
+        templateOverrides[template.key]?.name ?? template.name
+    }
+
+    private func resetPromptDrafts() {
+        draftPromptName = ""
+        draftPromptText = ""
+        editingTemplateKey = nil
+        editingPresetID = nil
+        isAddPromptPresented = false
     }
 
     func selectPreset(_ preset: PromptPresetModel) {
@@ -761,31 +1108,80 @@ final class AppState: ObservableObject {
     }
 
     func presentPreset(_ preset: PromptPresetModel) {
-        promptPreview = PromptPreviewState(title: preset.name, text: preset.promptText, presetID: preset.id)
+        promptPreview = PromptPreviewState(title: preset.name, text: preset.promptText, presetID: preset.id, templateKey: preset.templateKey)
     }
 
     func presentTemplate(_ template: PromptTemplate) {
+        let name = templateDisplayName(template)
+        let text = templateText(template)
+        promptPreview = PromptPreviewState(title: name, text: text, presetID: templateOverrides[template.key]?.id, templateKey: template.key)
+    }
+
+    func activateTemplate(_ template: PromptTemplate) {
+        userPrompt = templateText(template)
+        activeTemplateKey = template.key
         selectedPresetID = nil
-        promptPreview = PromptPreviewState(title: template.name, text: template.text, presetID: nil)
+        presetStatus = "Using \(templateDisplayName(template))"
+    }
+
+    func activatePreset(_ preset: PromptPresetModel) {
+        userPrompt = preset.promptText
+        selectedPresetID = preset.id
+        activeTemplateKey = nil
+        presetStatus = "Using \(preset.name)"
     }
 
     func applyPreview(_ preview: PromptPreviewState) {
         userPrompt = preview.text
-        selectedPresetID = preview.presetID
+        if let presetID = preview.presetID {
+            selectedPresetID = presetID
+            activeTemplateKey = nil
+        } else if let templateKey = preview.templateKey {
+            activeTemplateKey = templateKey
+            selectedPresetID = nil
+        } else {
+            selectedPresetID = nil
+            activeTemplateKey = nil
+        }
         presetStatus = "Using \(preview.title)"
     }
 
     func beginAddPrompt() {
+        editingTemplateKey = nil
+        editingPresetID = nil
         draftPromptName = ""
         draftPromptText = userPrompt
         isAddPromptPresented = true
     }
 
-    func submitNewPrompt() {
-        createPreset(name: draftPromptName, text: draftPromptText) { [weak self] in
-            self?.draftPromptName = ""
-            self?.draftPromptText = ""
-            self?.isAddPromptPresented = false
+    func beginEditTemplate(_ template: PromptTemplate) {
+        guard isLoggedIn else {
+            presetStatus = "Log in to customize templates"
+            return
+        }
+        editingTemplateKey = template.key
+        editingPresetID = nil
+        draftPromptName = templateDisplayName(template)
+        draftPromptText = templateText(template)
+        isAddPromptPresented = true
+    }
+
+    func beginEditPreset(_ preset: PromptPresetModel) {
+        editingPresetID = preset.id
+        editingTemplateKey = nil
+        draftPromptName = preset.name
+        draftPromptText = preset.promptText
+        isAddPromptPresented = true
+    }
+
+    func submitPromptForm() {
+        if let presetID = editingPresetID {
+            updatePreset(presetID: presetID, name: draftPromptName, text: draftPromptText)
+            return
+        }
+        let templateKey = editingTemplateKey
+        createPreset(name: draftPromptName, text: draftPromptText, templateKey: templateKey) { [weak self] in
+            self?.resetPromptDrafts()
         }
     }
 
@@ -797,21 +1193,36 @@ final class AppState: ObservableObject {
         copyResultToClipboard(latestContentText)
     }
 
-    private func applyTranscription(_ text: String, mode: RecordingMode) {
-        let duration = recordingDuration()
+    private func applyTranscription(_ text: String, mode: RecordingMode, duration: TimeInterval, historyEntry: TranscriptionHistoryItem?) {
         switch mode {
         case .temporaryPrompt:
             latestPromptText = text
             userPrompt = text
+            selectedPresetID = nil
+            activeTemplateKey = nil
             captureStatus = "Temporary prompt captured."
+            pendingTemporaryPrompt = text
         case .mainContent:
             latestContentText = text
             captureStatus = "Main content captured."
             insertTextIntoFrontmostApp(text)
+            pendingTemporaryPrompt = nil
         case .idle:
             captureStatus = "Capture complete."
         }
-        logTranscriptionHistory(text: text, mode: mode, duration: duration)
+        if let providedEntry = historyEntry {
+            replaceHistoryEntry(providedEntry)
+        } else {
+            let entry = TranscriptionHistoryItem(
+                id: UUID().uuidString,
+                mode: mode.historyKey,
+                text: text,
+                rawText: text,
+                duration: duration,
+                timestamp: Date()
+            )
+            appendHistoryEntry(entry)
+        }
         lastRecordingStartedAt = nil
     }
 
@@ -911,12 +1322,97 @@ final class AppState: ObservableObject {
         return Date().timeIntervalSince(start)
     }
 
-    private func logTranscriptionHistory(text: String, mode: RecordingMode, duration: TimeInterval) {
-        let entry = TranscriptionHistoryItem(mode: mode, text: text, duration: duration, timestamp: Date())
-        transcriptionHistory.insert(entry, at: 0)
-        if transcriptionHistory.count > 100 {
-            transcriptionHistory.removeLast(transcriptionHistory.count - 100)
+    private func indicatorText(for mode: RecordingMode) -> String {
+        switch mode {
+        case .temporaryPrompt:
+            return "Listening for temporary prompt…"
+        case .mainContent:
+            return "Listening for main content…"
+        case .idle:
+            return ""
         }
+    }
+
+    private func captureStatusText(for mode: RecordingMode) -> String {
+        switch mode {
+        case .temporaryPrompt:
+            return "Recording temporary prompt…"
+        case .mainContent:
+            return "Recording main content…"
+        case .idle:
+            return ""
+        }
+    }
+
+    private func restoreRecordingIndicatorState() {
+        if recordingMode == .idle {
+            recordingIndicator = ""
+            updateRecordingHUD()
+            return
+        }
+        recordingIndicator = indicatorText(for: recordingMode)
+        captureStatus = captureStatusText(for: recordingMode)
+        updateRecordingHUD()
+    }
+
+    private func appendHistoryEntry(_ entry: TranscriptionHistoryItem) {
+        transcriptionHistory.insert(entry, at: 0)
+        if transcriptionHistory.count > 200 {
+            transcriptionHistory.removeLast(transcriptionHistory.count - 200)
+        }
+    }
+
+    private func replaceHistoryEntry(_ entry: TranscriptionHistoryItem) {
+        if let index = transcriptionHistory.firstIndex(where: { $0.id == entry.id }) {
+            transcriptionHistory[index] = entry
+        } else {
+            appendHistoryEntry(entry)
+        }
+    }
+
+    private func scheduleTranscriptionPoll(id: String, attempt: Int) {
+        guard pendingContentJob?.id == id else { return }
+        guard attempt < 15 else {
+            captureStatus = "Rewrite timed out; using raw transcript."
+            completePendingContentWithRaw()
+            return
+        }
+        guard !userID.isEmpty, let url = URL(string: "\(backendBaseURL)/api/v1/transcriptions/\(id)?user_id=\(userID)") else {
+            return
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard
+                    let http = response as? HTTPURLResponse,
+                    (200..<300).contains(http.statusCode),
+                    let data = data,
+                    let payload = try? decoder.decode(TranscriptionLogResponse.self, from: data),
+                    let finalText = payload.effectiveText
+                else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        self.scheduleTranscriptionPoll(id: id, attempt: attempt + 1)
+                    }
+                    return
+                }
+                let historyItem = TranscriptionHistoryItem(response: payload, finalText: finalText)
+                let durationValue = payload.durationSeconds ?? self.pendingContentJob?.duration ?? 0
+                self.applyTranscription(finalText, mode: .mainContent, duration: durationValue, historyEntry: historyItem)
+                self.pendingContentJob = nil
+            }
+        }.resume()
+    }
+
+    private func completePendingContentWithRaw() {
+        guard let job = pendingContentJob else { return }
+        if let entry = transcriptionHistory.first(where: { $0.id == job.id }) {
+            applyTranscription(entry.rawText, mode: .mainContent, duration: job.duration, historyEntry: entry)
+        } else {
+            applyTranscription(latestContentText, mode: .mainContent, duration: job.duration, historyEntry: nil)
+        }
+        pendingContentJob = nil
     }
 
 #if os(macOS)
@@ -961,6 +1457,29 @@ struct APIKeyDTO: Decodable {
     }
 }
 
+struct TranscriptionLogResponse: Decodable {
+    let id: String
+    let mode: String
+    let transcription: String
+    let transformedText: String?
+    let durationSeconds: Double?
+    let createdAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case mode
+        case transcription
+        case transformedText = "transformed_text"
+        case durationSeconds = "duration_seconds"
+        case createdAt = "created_at"
+    }
+
+    var effectiveText: String? {
+        guard let transformedText, !transformedText.isEmpty else { return nil }
+        return transformedText
+    }
+}
+
 extension Data {
     mutating func appendString(_ string: String) {
         if let data = string.data(using: .utf8) {
@@ -973,22 +1492,46 @@ struct PromptPresetModel: Identifiable, Codable, Hashable {
     let id: String
     let name: String
     let promptText: String
+    let templateKey: String?
     let updatedAt: String
 
     enum CodingKeys: String, CodingKey {
         case id
         case name
         case promptText = "prompt_text"
+        case templateKey = "template_key"
         case updatedAt = "updated_at"
     }
 }
 
 struct TranscriptionHistoryItem: Identifiable {
-    let id = UUID()
-    let mode: RecordingMode
+    let id: String
+    let mode: String
     let text: String
+    let rawText: String
     let duration: TimeInterval
     let timestamp: Date
+
+    init(id: String, mode: String, text: String, rawText: String, duration: TimeInterval, timestamp: Date) {
+        self.id = id
+        self.mode = mode
+        self.text = text
+        self.rawText = rawText
+        self.duration = duration
+        self.timestamp = timestamp
+    }
+
+    init(response: TranscriptionLogResponse, finalText: String? = nil) {
+        let display = finalText ?? response.effectiveText ?? response.transcription
+        self.init(
+            id: response.id,
+            mode: response.mode,
+            text: display,
+            rawText: response.transcription,
+            duration: response.durationSeconds ?? 0,
+            timestamp: response.createdAt ?? Date()
+        )
+    }
 
     var preview: String {
         if text.count <= 80 {
@@ -1000,13 +1543,26 @@ struct TranscriptionHistoryItem: Identifiable {
     var durationLabel: String {
         String(format: "%.1fs", duration)
     }
+
+    var modeLabel: String {
+        switch mode.lowercased() {
+        case "prompt":
+            return "Prompt"
+        case "content":
+            return "Content"
+        default:
+            return mode.capitalized
+        }
+    }
 }
 
 struct PromptTemplate: Identifiable {
-    let id = UUID()
+    let key: String
     let name: String
     let description: String
-    let text: String
+    let defaultText: String
+
+    var id: String { key }
 }
 
 struct PromptPreviewState: Identifiable {
@@ -1014,6 +1570,7 @@ struct PromptPreviewState: Identifiable {
     let title: String
     let text: String
     let presetID: String?
+    let templateKey: String?
 }
 
 extension RecordingMode {
@@ -1027,4 +1584,20 @@ extension RecordingMode {
             return "Idle"
         }
     }
+
+    var historyKey: String {
+        switch self {
+        case .temporaryPrompt:
+            return "prompt"
+        case .mainContent:
+            return "content"
+        case .idle:
+            return "idle"
+        }
+    }
+}
+
+private struct PendingContentJob {
+    let id: String
+    let duration: TimeInterval
 }

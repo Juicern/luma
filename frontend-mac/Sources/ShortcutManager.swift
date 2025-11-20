@@ -1,20 +1,23 @@
 #if os(macOS)
 import Cocoa
+import Carbon.HIToolbox
 
 final class ShortcutManager {
     static let shared = ShortcutManager()
 
     private var temporaryShortcut: RecordingShortcut?
     private var mainShortcut: RecordingShortcut?
+    private var cancelHandler: (() -> Void)?
     private var handler: ((RecordingMode) -> Void)?
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
     private init() {}
 
-    func configure(temporary: RecordingShortcut, main: RecordingShortcut, handler: @escaping (RecordingMode) -> Void) {
+    func configure(temporary: RecordingShortcut, main: RecordingShortcut, cancel: (() -> Void)? = nil, handler: @escaping (RecordingMode) -> Void) {
         temporaryShortcut = temporary
         mainShortcut = main
+        cancelHandler = cancel
         self.handler = handler
         installTapIfNeeded()
     }
@@ -52,6 +55,10 @@ final class ShortcutManager {
             DispatchQueue.main.async { handler(.temporaryPrompt) }
         } else if let shortcut = mainShortcut, shortcut.matches(keyCode: keyCode, flags: flags) {
             DispatchQueue.main.async { handler(.mainContent) }
+        } else if keyCode == CGKeyCode(kVK_Escape) {
+            DispatchQueue.main.async { [weak self] in
+                self?.cancelHandler?()
+            }
         }
     }
 }

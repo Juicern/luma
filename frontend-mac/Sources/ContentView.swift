@@ -7,15 +7,28 @@ struct ContentView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        VStack {
+        Group {
             if !state.microphoneAuthorized {
                 PermissionGateView()
             } else {
-                MainDashboardView()
+                HStack(spacing: 0) {
+                    SidebarView()
+                        .frame(width: 240)
+                        .background(.ultraThinMaterial)
+                    ScrollView {
+                        VStack {
+                            ContentPanelView()
+                                .frame(maxWidth: 1100)
+                                .padding(.vertical, 32)
+                                .padding(.horizontal, 56)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .background(Color(nsColor: .windowBackgroundColor))
+                }
             }
         }
-        .padding()
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(minWidth: 1024, minHeight: 640)
         .sheet(item: $state.promptPreview) { preview in
             PromptPreviewSheet(preview: preview)
                 .environmentObject(state)
@@ -51,48 +64,118 @@ struct PermissionGateView: View {
     }
 }
 
-struct MainDashboardView: View {
+struct SidebarView: View {
+    @EnvironmentObject private var state: AppState
+    @State private var hoveredPanel: DashboardPanel?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Luma")
+                .font(.largeTitle)
+                .bold()
+                .padding(.top, 28)
+                .padding(.bottom, 20)
+                .padding(.horizontal, 20)
+            ForEach(DashboardPanel.allCases) { panel in
+                let isActive = state.selectedPanel == panel
+                let isHovered = hoveredPanel == panel
+                Button {
+                    state.selectedPanel = panel
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: icon(for: panel))
+                        Text(panel.rawValue)
+                            .font(.headline)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(isActive ? Color.accentColor.opacity(0.25) :
+                                  (isHovered ? Color.accentColor.opacity(0.12) : .clear))
+                    )
+                }
+                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    hoveredPanel = hovering ? panel : nil
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+    }
+
+    private func icon(for panel: DashboardPanel) -> String {
+        switch panel {
+        case .guide: return "questionmark.circle"
+        case .account: return "person.crop.circle"
+        case .permissions: return "shield.lefthalf.filled"
+        case .prompts: return "text.quote"
+        case .history: return "clock.arrow.circlepath"
+        case .model: return "server.rack"
+        }
+    }
+}
+
+struct ContentPanelView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        HStack(alignment: .top, spacing: 24) {
-            TipsColumn()
-                .frame(width: 280)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    UserCard()
+        VStack(alignment: .leading, spacing: 24) {
+            switch state.selectedPanel {
+            case .guide:
+                UserGuideView()
+            case .account:
+                UserCard()
+            case .permissions:
+                VStack(spacing: 24) {
                     PermissionStatusCard()
-                    APIKeyCard()
                     ShortcutCard()
-                    PromptCard()
-                    RecordingControls()
-                    TranscriptionHistoryCard()
                 }
+            case .prompts:
+                PromptCard()
+            case .history:
+                TranscriptionHistoryCard()
+            case .model:
+                APIKeyCard()
             }
         }
     }
 }
 
-struct TipsColumn: View {
-    private let tips = [
-        "1. Paste your API key",
-        "2. Customize your prompt",
-        "3. Create or resume a session",
-        "4. Use shortcuts to capture prompt & content",
-        "5. Review the rewrite before sending"
-    ]
-
+struct UserGuideView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Quick Tips")
-                .font(.headline)
-            ForEach(tips, id: \.self) { tip in
-                Label(tip, systemImage: "info.circle")
-            }
-            Spacer()
+        VStack(alignment: .leading, spacing: 16) {
+            Text("How to Use Luma")
+                .font(.title2)
+                .bold()
+            GuideStep(title: "1. Sign In", description: "Create an account or log in so we can store your API keys and personal prompt library.")
+            GuideStep(title: "2. Connect an API Key", description: "Paste your OpenAI or Gemini key under Models & Keys. We store it encrypted locally.")
+            GuideStep(title: "3. Pick a prompt", description: "Choose a quick template or open your saved prompts to see the detailed instructions before using them.")
+            GuideStep(title: "4. Set shortcuts & permissions", description: "Grant microphone + accessibility access, then configure the temporary/main shortcuts from the Permission tab.")
+            GuideStep(title: "5. Capture & paste", description: "Use the shortcuts anywhere. Luma transcribes, rewrites, and automatically inserts the text into the active app while keeping a copy in History.")
+            GuideStep(title: "6. Review history", description: "If you need an earlier transcription, open History, search, and copy it back.")
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+struct GuideStep: View {
+    var title: String
+    var description: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.headline)
+            Text(description)
+                .font(.body)
+                .foregroundColor(.secondary)
+        }
     }
 }
 
@@ -100,53 +183,93 @@ struct UserCard: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             Text("Account & Backend")
                 .font(.headline)
-            TextField("Backend URL", text: $state.backendBaseURL)
-                .textFieldStyle(.roundedBorder)
+            Divider()
             if state.isLoggedIn, let user = state.currentUser {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("Signed in as \(user.name)", systemImage: "person.crop.circle.badge.checkmark")
-                        .font(.subheadline)
-                    Text(user.email)
-                        .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Button("Refresh Session") { state.restoreSession() }
-                        Button("Log Out") { state.logout() }
+                        Label("Signed in as \(user.name)", systemImage: "person.crop.circle.badge.checkmark")
+                            .font(.title3)
+                        Spacer()
+                        HStack(spacing: 12) {
+                            Button("Refresh Session") { state.restoreSession() }
+                            Button("Log Out") { state.logout() }
+                                .buttonStyle(.borderedProminent)
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
-                    if !state.userID.isEmpty {
-                        Text("User ID stored locally.")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
+                    Text(user.email)
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                    Text("User ID stored locally.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             } else {
+                Picker("", selection: $state.isRegistering) {
+                    Text("Log In").tag(false)
+                    Text("Sign Up").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Sign in with your Luma account to sync presets and API keys.")
-                        .font(.subheadline)
-                    TextField("Email", text: $state.loginEmail)
-                        .textFieldStyle(.roundedBorder)
-                        .textContentType(.username)
-                    SecureField("Password", text: $state.loginPassword)
-                        .textFieldStyle(.roundedBorder)
-                        .textContentType(.password)
-                    HStack {
-                        Button("Log In") { state.login() }
-                            .buttonStyle(.borderedProminent)
-                        Button("Check Saved Session") { state.restoreSession() }
-                        if !state.loginStatus.isEmpty {
-                            Text(state.loginStatus)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                    if state.isRegistering {
+                        Text("Create a Luma account to sync presets and API keys.")
+                            .font(.subheadline)
+                        TextField("Name", text: $state.registrationName)
+                            .textFieldStyle(.roundedBorder)
+                            .submitLabel(.next)
+                        TextField("Email", text: $state.registrationEmail)
+                            .textFieldStyle(.roundedBorder)
+                            .submitLabel(.next)
+                        SecureField("Password", text: $state.registrationPassword)
+                            .textFieldStyle(.roundedBorder)
+                            .submitLabel(.done)
+                        HStack {
+                            Button("Create Account") { state.registerUser() }
+                                .buttonStyle(.borderedProminent)
+                            if !state.registrationStatus.isEmpty {
+                                Text(state.registrationStatus)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
+                    } else {
+                        Text("Sign in with your Luma account to sync presets and API keys.")
+                            .font(.subheadline)
+                        TextField("Email", text: $state.loginEmail)
+                            .textFieldStyle(.roundedBorder)
+                            .textContentType(.username)
+                            .submitLabel(.next)
+                        SecureField("Password", text: $state.loginPassword)
+                            .textFieldStyle(.roundedBorder)
+                            .textContentType(.password)
+                            .submitLabel(.go)
+                        HStack {
+                            Button("Log In") { state.login() }
+                                .buttonStyle(.borderedProminent)
+                            Button("Check Saved Session") { state.restoreSession() }
+                            if !state.loginStatus.isEmpty {
+                                Text(state.loginStatus)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                .onSubmit {
+                    if state.isRegistering {
+                        state.registerUser()
+                    } else {
+                        state.login()
                     }
                 }
             }
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -230,7 +353,9 @@ struct PermissionStatusRow: View {
             Spacer()
             Button(actionTitle, action: action)
         }
-        .padding(8)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(minHeight: 88, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.primary.opacity(0.05))
@@ -291,13 +416,42 @@ struct ShortcutCard: View {
             Text("Keyboard Shortcuts")
                 .font(.headline)
             Toggle("Allow prompt/content shortcuts to be the same", isOn: $state.allowSharedShortcut)
-            HStack {
-                ShortcutRecorder(title: "Temporary Prompt", shortcut: $state.temporaryShortcut) { shortcut in
-                    state.updateShortcut(shortcut, forTemporary: true)
+            HStack(alignment: .top, spacing: 32) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Temporary Prompt")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    ShortcutCaptureField(
+                        title: "Temporary Prompt",
+                        shortcut: $state.temporaryShortcut,
+                        onChange: { shortcut in
+                            state.updateShortcut(shortcut, forTemporary: true)
+                        }
+                    )
+                    #if os(macOS)
+                    Text(state.temporaryShortcut.descriptiveLabel)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    #endif
                 }
-                ShortcutRecorder(title: "Main Content", shortcut: $state.mainShortcut) { shortcut in
-                    state.updateShortcut(shortcut, forTemporary: false)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Main Content")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    ShortcutCaptureField(
+                        title: "Main Content",
+                        shortcut: $state.mainShortcut,
+                        onChange: { shortcut in
+                            state.updateShortcut(shortcut, forTemporary: false)
+                        }
+                    )
+                    #if os(macOS)
+                    Text(state.mainShortcut.descriptiveLabel)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    #endif
                 }
+                Spacer()
             }
         }
         .padding()
@@ -305,49 +459,15 @@ struct ShortcutCard: View {
     }
 }
 
-struct ShortcutRecorder: View {
-    var title: String
-    @Binding var shortcut: RecordingShortcut
-    var onChange: (RecordingShortcut) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text(title)
-                .font(.subheadline)
-            ShortcutCaptureField(title: title, shortcut: $shortcut, onChange: onChange)
-                .frame(width: 140, height: 32)
-        }
-    }
-}
-
 struct PromptCard: View {
     @EnvironmentObject private var state: AppState
-    private let columns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
+    private let columns = [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 16)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Prompt Composer")
-                .font(.headline)
-
-            Text("Quick Templates")
-                .font(.subheadline)
-            LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(state.defaultPromptTemplates) { template in
-                    PromptChip(
-                        title: template.name,
-                        subtitle: template.description,
-                        isActive: false
-                    ) {
-                        state.presentTemplate(template)
-                    }
-                }
-            }
-
-            Divider()
-
             HStack {
-                Text("Saved Prompts")
-                    .font(.subheadline)
+                Text("Prompt Library")
+                    .font(.headline)
                 Spacer()
                 Button("Refresh") { state.loadPresets() }
                     .disabled(!state.isLoggedIn)
@@ -359,22 +479,44 @@ struct PromptCard: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!state.isLoggedIn)
             }
-            if state.presets.isEmpty {
-                Text(state.isLoggedIn ? "No prompts yet. Add one to reuse your favorite instructions." : "Log in to manage prompts.")
+
+            if state.presets.isEmpty && !state.isLoggedIn {
+                Text("Log in to sync and save prompts.")
                     .font(.caption)
                     .foregroundColor(.secondary)
-            } else {
-                LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(state.presets) { preset in
-                        PromptChip(
-                            title: preset.name,
-                            subtitle: state.selectedPresetID == preset.id ? "Active" : "Tap to preview",
-                            isActive: state.selectedPresetID == preset.id
-                        ) {
-                            state.presentPreset(preset)
-                        }
-                    }
+            }
+
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(state.defaultPromptTemplates) { template in
+                    PromptChip(
+                        title: state.templateDisplayName(template),
+                        subtitle: template.description,
+                        badgeText: "Template",
+                        isActive: state.activeTemplateKey == template.key && state.selectedPresetID == nil,
+                        primaryAction: { state.activateTemplate(template) },
+                        detailAction: { state.presentTemplate(template) },
+                        editAction: { state.beginEditTemplate(template) },
+                        deleteAction: nil
+                    )
                 }
+                ForEach(state.presets) { preset in
+                    PromptChip(
+                        title: preset.name,
+                        subtitle: state.selectedPresetID == preset.id ? "Active" : "Tap to use",
+                        badgeText: nil,
+                        isActive: state.selectedPresetID == preset.id,
+                        primaryAction: { state.activatePreset(preset) },
+                        detailAction: { state.presentPreset(preset) },
+                        editAction: { state.beginEditPreset(preset) },
+                        deleteAction: { state.deletePreset(preset) }
+                    )
+                }
+            }
+
+            if state.presets.isEmpty && state.isLoggedIn {
+                Text("No custom prompts yet. Add one to reuse your favorite instructions.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             if !state.presetStatus.isEmpty {
@@ -397,57 +539,6 @@ struct PromptCard: View {
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
-    }
-}
-
-struct RecordingControls: View {
-    @EnvironmentObject private var state: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Capture Controls")
-                .font(.headline)
-            HStack(spacing: 12) {
-                Button(state.recordingMode == .temporaryPrompt ? "Stop Prompt" : "Record Temporary Prompt") {
-                    toggle(mode: .temporaryPrompt)
-                }
-                .disabled(!state.isLoggedIn)
-                Button(state.recordingMode == .mainContent ? "Stop Main" : "Record Main Content") {
-                    toggle(mode: .mainContent)
-                }
-                .disabled(!state.isLoggedIn)
-            }
-            .buttonStyle(.borderedProminent)
-            if !state.isLoggedIn {
-                Text("Log in to enable capture shortcuts.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            if state.recordingMode != .idle {
-                Text("Listening… press the shortcut again or click stop.")
-                    .font(.caption)
-            }
-            if !state.captureStatus.isEmpty {
-                Text(state.captureStatus)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            if !state.pasteStatus.isEmpty {
-                Text(state.pasteStatus)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding()
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func toggle(mode: RecordingMode) {
-        if state.recordingMode == mode {
-            state.stopRecording()
-        } else {
-            state.startRecording(mode)
-        }
     }
 }
 
@@ -495,7 +586,7 @@ struct TranscriptionHistoryCard: View {
                             .font(.caption)
                     }
                     TableColumn("Mode") { entry in
-                        Text(entry.mode.displayName)
+                        Text(entry.modeLabel)
                     }
                     TableColumn("Duration") { entry in
                         Text(entry.durationLabel)
@@ -548,30 +639,68 @@ struct TranscriptionPreview: View {
 struct PromptChip: View {
     var title: String
     var subtitle: String?
+    var badgeText: String?
     var isActive: Bool
-    var action: () -> Void
+    var primaryAction: () -> Void
+    var detailAction: (() -> Void)?
+    var editAction: (() -> Void)?
+    var deleteAction: (() -> Void)?
 
     var body: some View {
-        Button(action: action) {
+        VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.subheadline)
-                    .bold()
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.subheadline)
+                        .bold()
+                    if let badgeText = badgeText {
+                        Text(badgeText.uppercased())
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.accentColor.opacity(0.2))
+                            )
+                    }
+                    Spacer()
+                }
                 if let subtitle = subtitle {
                     Text(subtitle)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(isActive ? Color.green.opacity(0.2) : Color.primary.opacity(0.05))
-            )
+            Spacer(minLength: 0)
+            HStack(spacing: 12) {
+                if let detailAction = detailAction {
+                    Button("Details", action: detailAction)
+                        .buttonStyle(.borderless)
+                }
+                if let editAction = editAction {
+                    Button("Customize", action: editAction)
+                        .buttonStyle(.borderless)
+                }
+                if let deleteAction = deleteAction {
+                    Button("Delete", role: .destructive, action: deleteAction)
+                        .buttonStyle(.borderless)
+                }
+                Spacer()
+            }
+            .font(.caption)
+            .foregroundColor(.accentColor)
         }
-        .buttonStyle(.plain)
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(isActive ? Color.green.opacity(0.25) : Color.primary.opacity(0.05))
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .onTapGesture {
+            primaryAction()
+        }
     }
 }
 
@@ -624,20 +753,25 @@ struct AddPromptSheet: View {
                         .frame(minHeight: 160)
                 }
             }
+            .navigationTitle(state.editingTemplateKey == nil ? "Add Prompt" : "Edit Template")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         state.isAddPromptPresented = false
+                        state.editingTemplateKey = nil
+                        state.editingPresetID = nil
+                        state.draftPromptName = ""
+                        state.draftPromptText = ""
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { state.submitNewPrompt() }
+                    Button("Save") { state.submitPromptForm() }
                         .disabled(state.draftPromptName.trimmingCharacters(in: .whitespaces).isEmpty ||
                                   state.draftPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .onAppear {
-                if state.draftPromptText.isEmpty {
+                if state.editingTemplateKey == nil && state.draftPromptText.isEmpty {
                     state.draftPromptText = state.userPrompt
                 }
             }
@@ -646,17 +780,91 @@ struct AddPromptSheet: View {
 }
 
 #if os(macOS)
-struct ShortcutCaptureField: NSViewRepresentable {
+struct ShortcutEditSheet: View {
+    var title: String
+    @Binding var shortcut: RecordingShortcut
+    var onSave: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Press the new keys for \(title).")
+                .font(.headline)
+            ShortcutRecorderField(shortcut: $shortcut)
+                .frame(height: 44)
+            Text("Hold the desired modifier keys (⌘, ⌥, ⇧, ⌃) and tap the final key.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            HStack {
+                Button("Cancel", action: onCancel)
+                Spacer()
+                Button("Save", action: onSave)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(width: 320)
+    }
+}
+
+struct ShortcutCaptureField: View {
     var title: String
     @Binding var shortcut: RecordingShortcut
     var onChange: (RecordingShortcut) -> Void
+    @State private var isEditing = false
+    @State private var draftShortcut: RecordingShortcut
+
+    init(title: String, shortcut: Binding<RecordingShortcut>, onChange: @escaping (RecordingShortcut) -> Void) {
+        self.title = title
+        _shortcut = shortcut
+        self.onChange = onChange
+        _draftShortcut = State(initialValue: shortcut.wrappedValue)
+    }
+
+    var body: some View {
+        Button {
+            draftShortcut = shortcut
+            isEditing = true
+        } label: {
+            HStack {
+                Text(shortcut.displayText.isEmpty ? "Set Shortcut" : shortcut.displayText)
+                    .font(.body)
+                Spacer()
+                Image(systemName: "pencil")
+                    .foregroundColor(.secondary)
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.primary.opacity(0.2))
+            )
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $isEditing) {
+            ShortcutEditSheet(
+                title: title,
+                shortcut: $draftShortcut,
+                onSave: {
+                    shortcut = draftShortcut
+                    onChange(draftShortcut)
+                    isEditing = false
+                },
+                onCancel: {
+                    isEditing = false
+                }
+            )
+        }
+    }
+}
+
+struct ShortcutRecorderField: NSViewRepresentable {
+    @Binding var shortcut: RecordingShortcut
 
     func makeNSView(context: Context) -> ShortcutTextField {
         let field = ShortcutTextField()
-        field.placeholderString = "Press shortcut"
+        field.placeholderString = "Press new shortcut"
         field.onShortcut = { newShortcut in
             shortcut = newShortcut
-            onChange(newShortcut)
         }
         field.stringValue = shortcut.displayText
         return field

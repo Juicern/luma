@@ -52,12 +52,12 @@ func (s *PromptService) ListPresets(ctx context.Context, userID string) ([]domai
 	return s.presetRepo.List(ctx, userID)
 }
 
-func (s *PromptService) CreatePreset(ctx context.Context, userID, name, text string) (domain.PromptPreset, error) {
-	return s.presetRepo.Create(ctx, userID, name, text)
+func (s *PromptService) CreatePreset(ctx context.Context, userID, name, text string, templateKey *string) (domain.PromptPreset, error) {
+	return s.presetRepo.Create(ctx, userID, name, text, templateKey)
 }
 
-func (s *PromptService) UpdatePreset(ctx context.Context, id, userID, name, text string) (domain.PromptPreset, error) {
-	return s.presetRepo.Update(ctx, id, userID, name, text)
+func (s *PromptService) UpdatePreset(ctx context.Context, id, userID, name, text string, templateKey *string) (domain.PromptPreset, error) {
+	return s.presetRepo.Update(ctx, id, userID, name, text, templateKey)
 }
 
 func (s *PromptService) DeletePreset(ctx context.Context, id, userID string) error {

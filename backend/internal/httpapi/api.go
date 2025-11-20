@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +25,7 @@ type API struct {
 	prompts       *service.PromptService
 	keys          *service.APIKeyService
 	transcription *service.TranscriptionService
+	composer      *service.ComposeService
 	logger        *slog.Logger
 }
 
@@ -45,6 +49,8 @@ func (api *API) registerRoutes(r *gin.RouterGroup) {
 	r.PUT("/api-keys/:provider", api.upsertAPIKey)
 	r.DELETE("/api-keys/:provider", api.deleteAPIKey)
 
+	r.GET("/transcriptions", api.listTranscriptions)
+	r.GET("/transcriptions/:id", api.getTranscription)
 	r.POST("/transcriptions", api.createTranscription)
 }
 
@@ -131,9 +137,10 @@ func (api *API) listPresets(c *gin.Context) {
 
 func (api *API) createPreset(c *gin.Context) {
 	var payload struct {
-		UserID     string `json:"user_id"`
-		Name       string `json:"name" binding:"required"`
-		PromptText string `json:"prompt_text" binding:"required"`
+		UserID      string `json:"user_id"`
+		Name        string `json:"name" binding:"required"`
+		PromptText  string `json:"prompt_text" binding:"required"`
+		TemplateKey string `json:"template_key"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		api.validationError(c, "name and prompt_text are required")
@@ -143,7 +150,12 @@ func (api *API) createPreset(c *gin.Context) {
 	if !ok {
 		return
 	}
-	preset, err := api.prompts.CreatePreset(c.Request.Context(), userID, payload.Name, payload.PromptText)
+	var templateKey *string
+	if strings.TrimSpace(payload.TemplateKey) != "" {
+		copyKey := payload.TemplateKey
+		templateKey = &copyKey
+	}
+	preset, err := api.prompts.CreatePreset(c.Request.Context(), userID, payload.Name, payload.PromptText, templateKey)
 	if err != nil {
 		api.handleError(c, err)
 		return
@@ -153,9 +165,10 @@ func (api *API) createPreset(c *gin.Context) {
 
 func (api *API) updatePreset(c *gin.Context) {
 	var payload struct {
-		UserID     string `json:"user_id"`
-		Name       string `json:"name" binding:"required"`
-		PromptText string `json:"prompt_text" binding:"required"`
+		UserID      string `json:"user_id"`
+		Name        string `json:"name" binding:"required"`
+		PromptText  string `json:"prompt_text" binding:"required"`
+		TemplateKey string `json:"template_key"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		api.validationError(c, "name and prompt_text are required")
@@ -165,7 +178,12 @@ func (api *API) updatePreset(c *gin.Context) {
 	if !ok {
 		return
 	}
-	preset, err := api.prompts.UpdatePreset(c.Request.Context(), c.Param("id"), userID, payload.Name, payload.PromptText)
+	var templateKey *string
+	if strings.TrimSpace(payload.TemplateKey) != "" {
+		copyKey := payload.TemplateKey
+		templateKey = &copyKey
+	}
+	preset, err := api.prompts.UpdatePreset(c.Request.Context(), c.Param("id"), userID, payload.Name, payload.PromptText, templateKey)
 	if err != nil {
 		api.handleError(c, err)
 		return
@@ -296,6 +314,30 @@ func (api *API) createTranscription(c *gin.Context) {
 	if provider == "" {
 		provider = "openai"
 	}
+	mode := c.PostForm("mode")
+	if mode == "" {
+		mode = "content"
+	}
+	durationSeconds := parseDuration(c.PostForm("duration_seconds"))
+	model := c.PostForm("model")
+	presetID := strings.TrimSpace(c.PostForm("preset_id"))
+	presetText := c.PostForm("preset_text")
+	temporaryPrompt := c.PostForm("temporary_prompt")
+	contextText := c.PostForm("context_text")
+
+	type promptResult struct {
+		text string
+		err  error
+	}
+	systemPromptCh := make(chan promptResult, 1)
+	go func() {
+		prompt, err := api.prompts.GetSystemPrompt(c.Request.Context())
+		if err != nil {
+			systemPromptCh <- promptResult{err: err}
+			return
+		}
+		systemPromptCh <- promptResult{text: prompt.PromptText}
+	}()
 
 	f, err := file.Open()
 	if err != nil {
@@ -310,12 +352,112 @@ func (api *API) createTranscription(c *gin.Context) {
 		return
 	}
 
-	text, err := api.transcription.Transcribe(c.Request.Context(), userID, provider, data, file.Filename)
+	entry, err := api.transcription.Transcribe(c.Request.Context(), userID, provider, mode, durationSeconds, data, file.Filename)
 	if err != nil {
 		api.handleError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"transcription": text})
+
+	var systemPromptText string
+	var promptErr error
+	if entry.Mode == "content" {
+		res := <-systemPromptCh
+		if res.err != nil {
+			promptErr = res.err
+		} else {
+			systemPromptText = res.text
+		}
+		api.launchComposition(service.ComposeRequest{
+			UserID:          userID,
+			Provider:        provider,
+			Model:           model,
+			SystemPrompt:    systemPromptText,
+			PresetID:        presetID,
+			PresetText:      presetText,
+			TemporaryPrompt: temporaryPrompt,
+			ContextText:     contextText,
+			Content:         entry.Transcript,
+		}, entry.ID)
+	} else {
+		select {
+		case res := <-systemPromptCh:
+			if res.err != nil {
+				promptErr = res.err
+			}
+		default:
+		}
+	}
+	if promptErr != nil {
+		api.logger.Warn("system prompt fetch failed", slog.Any("error", promptErr))
+	}
+	processing := entry.Mode == "content"
+	c.JSON(http.StatusOK, gin.H{
+		"id":               entry.ID,
+		"mode":             entry.Mode,
+		"transcription":    entry.Transcript,
+		"transformed_text": nil,
+		"duration_seconds": entry.DurationSeconds,
+		"created_at":       entry.CreatedAt,
+		"processing":       processing,
+	})
+}
+
+func (api *API) listTranscriptions(c *gin.Context) {
+	userID, ok := api.requireUserQuery(c)
+	if !ok {
+		return
+	}
+	limit := parseLimit(c.Query("limit"))
+	entries, err := api.transcription.ListHistory(c.Request.Context(), userID, limit)
+	if err != nil {
+		api.handleError(c, err)
+		return
+	}
+	resp := make([]gin.H, 0, len(entries))
+	for _, entry := range entries {
+		resp = append(resp, gin.H{
+			"id":               entry.ID,
+			"mode":             entry.Mode,
+			"transcription":    entry.Transcript,
+			"transformed_text": entry.GeneratedText,
+			"duration_seconds": entry.DurationSeconds,
+			"created_at":       entry.CreatedAt,
+		})
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func (api *API) getTranscription(c *gin.Context) {
+	userID, ok := api.requireUserQuery(c)
+	if !ok {
+		return
+	}
+	entry, err := api.transcription.Get(c.Request.Context(), userID, c.Param("id"))
+	if err != nil {
+		api.handleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":               entry.ID,
+		"mode":             entry.Mode,
+		"transcription":    entry.Transcript,
+		"transformed_text": entry.GeneratedText,
+		"duration_seconds": entry.DurationSeconds,
+		"created_at":       entry.CreatedAt,
+	})
+}
+
+func (api *API) launchComposition(req service.ComposeRequest, logID string) {
+	go func() {
+		result, err := api.composer.Compose(context.Background(), req)
+		if err != nil {
+			api.logger.Warn("compose failed", slog.String("log_id", logID), slog.Any("error", err))
+			return
+		}
+		if err := api.transcription.AttachGeneratedText(context.Background(), logID, result); err != nil {
+			api.logger.Warn("failed to attach generated text", slog.String("log_id", logID), slog.Any("error", err))
+		}
+	}()
 }
 
 func (api *API) handleError(c *gin.Context, err error) {
@@ -400,4 +542,24 @@ func (api *API) resolveUserID(c *gin.Context, provided string) (string, bool) {
 		return "", false
 	}
 	return user.ID, true
+}
+
+func parseDuration(value string) float64 {
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.ParseFloat(value, 64); err == nil && seconds >= 0 {
+		return seconds
+	}
+	return 0
+}
+
+func parseLimit(value string) int {
+	if value == "" {
+		return 50
+	}
+	if n, err := strconv.Atoi(value); err == nil && n > 0 && n <= 500 {
+		return n
+	}
+	return 50
 }

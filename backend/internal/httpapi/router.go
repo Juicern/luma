@@ -15,6 +15,7 @@ func NewRouter(
 	promptService *service.PromptService,
 	apiKeyService *service.APIKeyService,
 	transcriptionService *service.TranscriptionService,
+	composerService *service.ComposeService,
 	logger *slog.Logger,
 ) http.Handler {
 	r := gin.New()
@@ -26,6 +27,7 @@ func NewRouter(
 		prompts:       promptService,
 		keys:          apiKeyService,
 		transcription: transcriptionService,
+		composer:      composerService,
 		logger:        logger,
 	}
 

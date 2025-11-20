@@ -65,12 +65,18 @@ CREATE TABLE IF NOT EXISTS user_prompt_presets (
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     prompt_text TEXT NOT NULL,
+    template_key TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE user_prompt_presets ADD COLUMN IF NOT EXISTS template_key TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_user_prompt_presets_user_id
     ON user_prompt_presets (user_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_prompt_presets_template
+    ON user_prompt_presets (user_id, template_key);
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY,
@@ -118,6 +124,21 @@ CREATE TABLE IF NOT EXISTS messages (
     transformed_text TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS transcription_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL,
+    transcript TEXT NOT NULL,
+    generated_text TEXT,
+    duration_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE transcription_logs ADD COLUMN IF NOT EXISTS generated_text TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_transcription_logs_user
+    ON transcription_logs (user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS user_sessions (
     id TEXT PRIMARY KEY,

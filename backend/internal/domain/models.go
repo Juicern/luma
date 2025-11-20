@@ -11,12 +11,13 @@ type SystemPrompt struct {
 }
 
 type PromptPreset struct {
-	ID         string    `db:"id"`
-	UserID     string    `db:"user_id"`
-	Name       string    `db:"name"`
-	PromptText string    `db:"prompt_text"`
-	CreatedAt  time.Time `db:"created_at"`
-	UpdatedAt  time.Time `db:"updated_at"`
+	ID          string    `db:"id" json:"id"`
+	UserID      string    `db:"user_id" json:"user_id"`
+	Name        string    `db:"name" json:"name"`
+	PromptText  string    `db:"prompt_text" json:"prompt_text"`
+	TemplateKey *string   `db:"template_key" json:"template_key,omitempty"`
+	CreatedAt   time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
 }
 
 type APIKey struct {
@@ -56,6 +57,16 @@ type Message struct {
 	RawText         string      `db:"raw_text"`
 	TransformedText *string     `db:"transformed_text"`
 	CreatedAt       time.Time   `db:"created_at"`
+}
+
+type TranscriptionLog struct {
+	ID              string    `db:"id"`
+	UserID          string    `db:"user_id"`
+	Mode            string    `db:"mode"`
+	Transcript      string    `db:"transcript"`
+	GeneratedText   *string   `db:"generated_text"`
+	DurationSeconds float64   `db:"duration_seconds"`
+	CreatedAt       time.Time `db:"created_at"`
 }
 
 type User struct {

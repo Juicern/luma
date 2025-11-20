@@ -20,7 +20,7 @@ func NewPromptPresetRepository(db *sql.DB) *PromptPresetRepository {
 
 func (r *PromptPresetRepository) List(ctx context.Context, userID string) ([]domain.PromptPreset, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, user_id, name, prompt_text, created_at, updated_at
+		SELECT id, user_id, name, prompt_text, template_key, created_at, updated_at
 		FROM user_prompt_presets
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -32,8 +32,8 @@ func (r *PromptPresetRepository) List(ctx context.Context, userID string) ([]dom
 
 	var presets []domain.PromptPreset
 	for rows.Next() {
-		var preset domain.PromptPreset
-		if err := rows.Scan(&preset.ID, &preset.UserID, &preset.Name, &preset.PromptText, &preset.CreatedAt, &preset.UpdatedAt); err != nil {
+		preset, err := scanPromptPreset(rows)
+		if err != nil {
 			return nil, err
 		}
 		presets = append(presets, preset)
@@ -43,40 +43,45 @@ func (r *PromptPresetRepository) List(ctx context.Context, userID string) ([]dom
 }
 
 func (r *PromptPresetRepository) Get(ctx context.Context, id string) (domain.PromptPreset, error) {
-	var preset domain.PromptPreset
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, name, prompt_text, created_at, updated_at
+	return scanPromptPreset(r.db.QueryRowContext(ctx, `
+		SELECT id, user_id, name, prompt_text, template_key, created_at, updated_at
 		FROM user_prompt_presets
 		WHERE id = $1
-	`, id).Scan(&preset.ID, &preset.UserID, &preset.Name, &preset.PromptText, &preset.CreatedAt, &preset.UpdatedAt)
-	return preset, err
+	`, id))
 }
 
-func (r *PromptPresetRepository) Create(ctx context.Context, userID, name, promptText string) (domain.PromptPreset, error) {
+func (r *PromptPresetRepository) Create(ctx context.Context, userID, name, promptText string, templateKey *string) (domain.PromptPreset, error) {
 	now := time.Now().UTC()
-	preset := domain.PromptPreset{
-		ID:         uuid.NewString(),
-		UserID:     userID,
-		Name:       name,
-		PromptText: promptText,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+	id := uuid.NewString()
+	if templateKey != nil {
+		return scanPromptPreset(r.db.QueryRowContext(ctx, `
+			INSERT INTO user_prompt_presets (id, user_id, name, prompt_text, template_key, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (user_id, template_key)
+			DO UPDATE SET name = EXCLUDED.name,
+			              prompt_text = EXCLUDED.prompt_text,
+			              updated_at = EXCLUDED.updated_at
+			RETURNING id, user_id, name, prompt_text, template_key, created_at, updated_at
+		`, id, userID, name, promptText, templateKey, now, now))
 	}
 
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO user_prompt_presets (id, user_id, name, prompt_text, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, preset.ID, preset.UserID, preset.Name, preset.PromptText, preset.CreatedAt, preset.UpdatedAt)
-	return preset, err
+	return scanPromptPreset(r.db.QueryRowContext(ctx, `
+		INSERT INTO user_prompt_presets (id, user_id, name, prompt_text, template_key, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NULL, $5, $6)
+		RETURNING id, user_id, name, prompt_text, template_key, created_at, updated_at
+	`, id, userID, name, promptText, now, now))
 }
 
-func (r *PromptPresetRepository) Update(ctx context.Context, id, userID, name, promptText string) (domain.PromptPreset, error) {
+func (r *PromptPresetRepository) Update(ctx context.Context, id, userID, name, promptText string, templateKey *string) (domain.PromptPreset, error) {
 	now := time.Now().UTC()
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE user_prompt_presets
-		SET name = $1, prompt_text = $2, updated_at = $3
-		WHERE id = $4 AND user_id = $5
-	`, name, promptText, now, id, userID)
+		SET name = $1,
+		    prompt_text = $2,
+		    template_key = $3,
+		    updated_at = $4
+		WHERE id = $5 AND user_id = $6
+	`, name, promptText, templateKey, now, id, userID)
 	if err != nil {
 		return domain.PromptPreset{}, err
 	}
@@ -95,4 +100,22 @@ func (r *PromptPresetRepository) Delete(ctx context.Context, id, userID string) 
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanPromptPreset(row rowScanner) (domain.PromptPreset, error) {
+	var preset domain.PromptPreset
+	var tmpl sql.NullString
+	err := row.Scan(&preset.ID, &preset.UserID, &preset.Name, &preset.PromptText, &tmpl, &preset.CreatedAt, &preset.UpdatedAt)
+	if err != nil {
+		return domain.PromptPreset{}, err
+	}
+	if tmpl.Valid {
+		value := tmpl.String
+		preset.TemplateKey = &value
+	}
+	return preset, nil
 }
