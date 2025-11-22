@@ -64,7 +64,7 @@ bundle: release
 	'    <key>NSApplicationSupportsAutomaticGraphicsSwitching</key>' \
 	'    <true/>' \
 	'    <key>LumaBackendURL</key>' \
-	'    <string>http://35.175.191.70:8080</string>' \
+	'    <string>https://luma-api.juicernchu.store</string>' \
 	'</dict>' \
 	'</plist>' \
 	> $$APP_ROOT/Info.plist
