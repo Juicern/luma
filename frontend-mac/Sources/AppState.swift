@@ -426,7 +426,7 @@ final class AppState: ObservableObject {
         cancelResetWorkItem = nil
 #endif
         recordingMode = .idle
-        recordingIndicator = ""
+        recordingIndicator = "Processing audio…"
         captureStatus = "Processing audio…"
         updateRecordingHUD()
         audioRecorder?.stop()
@@ -1223,6 +1223,10 @@ final class AppState: ObservableObject {
             )
             appendHistoryEntry(entry)
         }
+        if recordingIndicator != "" && pendingContentJob == nil {
+            recordingIndicator = ""
+            updateRecordingHUD()
+        }
         lastRecordingStartedAt = nil
     }
 
@@ -1399,20 +1403,20 @@ final class AppState: ObservableObject {
                 }
                 let historyItem = TranscriptionHistoryItem(response: payload, finalText: finalText)
                 let durationValue = payload.durationSeconds ?? self.pendingContentJob?.duration ?? 0
-                self.applyTranscription(finalText, mode: .mainContent, duration: durationValue, historyEntry: historyItem)
                 self.pendingContentJob = nil
+                self.applyTranscription(finalText, mode: .mainContent, duration: durationValue, historyEntry: historyItem)
             }
         }.resume()
     }
 
     private func completePendingContentWithRaw() {
         guard let job = pendingContentJob else { return }
+        pendingContentJob = nil
         if let entry = transcriptionHistory.first(where: { $0.id == job.id }) {
             applyTranscription(entry.rawText, mode: .mainContent, duration: job.duration, historyEntry: entry)
         } else {
             applyTranscription(latestContentText, mode: .mainContent, duration: job.duration, historyEntry: nil)
         }
-        pendingContentJob = nil
     }
 
 #if os(macOS)
