@@ -25,6 +25,10 @@ build:
 run:
 	swift run $(APP_NAME)
 
+# run against local backend
+run-local:
+	LUMA_BACKEND_URL=http://localhost:8080 swift run $(APP_NAME)
+
 release:
 	swift build -c release
 
