@@ -37,6 +37,10 @@ struct ContentView: View {
             AddPromptSheet()
                 .environmentObject(state)
         }
+        .sheet(item: $state.selectedHistoryItem) { item in
+            HistoryPreviewSheet(item: item)
+                .environmentObject(state)
+        }
     }
 }
 
@@ -246,6 +250,10 @@ struct UserCard: View {
                             .textFieldStyle(.roundedBorder)
                             .textContentType(.password)
                             .submitLabel(.go)
+                        Button("Fill from Keychain") {
+                            state.loadCredentialsFromKeychain()
+                        }
+                        .buttonStyle(.bordered)
                         HStack {
                             Button("Log In") { state.login() }
                                 .buttonStyle(.borderedProminent)
@@ -410,6 +418,18 @@ struct APIKeyCard: View {
 
 struct ShortcutCard: View {
     @EnvironmentObject private var state: AppState
+    @State private var editingKind: ShortcutKind?
+    @State private var draftShortcut = RecordingShortcut(key: "R", modifiers: [.command, .option])
+
+    enum ShortcutKind: Identifiable {
+        case temporary, main
+        var id: String {
+            switch self {
+            case .temporary: return "temporary"
+            case .main: return "main"
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -417,45 +437,43 @@ struct ShortcutCard: View {
                 .font(.headline)
             Toggle("Allow prompt/content shortcuts to be the same", isOn: $state.allowSharedShortcut)
             HStack(alignment: .top, spacing: 32) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Temporary Prompt")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    ShortcutCaptureField(
-                        title: "Temporary Prompt",
-                        shortcut: $state.temporaryShortcut,
-                        onChange: { shortcut in
-                            state.updateShortcut(shortcut, forTemporary: true)
-                        }
-                    )
-                    #if os(macOS)
-                    Text(state.temporaryShortcut.descriptiveLabel)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    #endif
+                ShortcutCaptureField(
+                    title: "Temporary Prompt",
+                    subtitle: state.temporaryShortcut.descriptiveLabel,
+                    shortcutText: state.temporaryShortcut.displayText.isEmpty ? "Click to set shortcut" : state.temporaryShortcut.displayText
+                ) {
+                    draftShortcut = state.temporaryShortcut
+                    editingKind = .temporary
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Main Content")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    ShortcutCaptureField(
-                        title: "Main Content",
-                        shortcut: $state.mainShortcut,
-                        onChange: { shortcut in
-                            state.updateShortcut(shortcut, forTemporary: false)
-                        }
-                    )
-                    #if os(macOS)
-                    Text(state.mainShortcut.descriptiveLabel)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    #endif
+                ShortcutCaptureField(
+                    title: "Main Content",
+                    subtitle: state.mainShortcut.descriptiveLabel,
+                    shortcutText: state.mainShortcut.displayText.isEmpty ? "Click to set shortcut" : state.mainShortcut.displayText
+                ) {
+                    draftShortcut = state.mainShortcut
+                    editingKind = .main
                 }
                 Spacer()
             }
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .sheet(item: $editingKind, content: { kind in
+            ShortcutEditSheet(
+                title: kind == .temporary ? "Temporary Prompt" : "Main Content",
+                shortcut: $draftShortcut,
+                onSave: {
+                    if kind == .temporary {
+                        state.updateShortcut(draftShortcut, forTemporary: true)
+                    } else {
+                        state.updateShortcut(draftShortcut, forTemporary: false)
+                    }
+                    editingKind = nil
+                },
+                onCancel: { editingKind = nil }
+            )
+            .frame(minWidth: 360)
+        })
     }
 }
 
@@ -591,7 +609,15 @@ struct TranscriptionHistoryCard: View {
                     TableColumn("Duration") { entry in
                         Text(entry.durationLabel)
                     }
-                    TableColumn("Preview", value: \.preview)
+                    TableColumn("Preview") { entry in
+                        Button(action: { state.selectedHistoryItem = entry }) {
+                            Text(entry.preview)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.accentColor)
+                    }
                     TableColumn("Actions") { entry in
                         Button("Copy") { state.copyTextToClipboard(entry.text) }
                     }
@@ -632,6 +658,58 @@ struct TranscriptionPreview: View {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(Color.primary.opacity(0.05))
                 )
+        }
+    }
+}
+
+struct HistoryPreviewSheet: View {
+    @EnvironmentObject private var state: AppState
+    var item: TranscriptionHistoryItem
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(item.modeLabel)
+                    .font(.title2)
+                    .bold()
+                Text(item.timestamp, style: .date)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(item.text)
+                    .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.05)))
+                if item.rawText != item.text {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Raw Input")
+                            .font(.subheadline)
+                            .bold()
+                        Text(item.rawText)
+                            .font(.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.05)))
+                    }
+                }
+                Spacer()
+                HStack {
+                    Button("Copy Result") {
+                        state.copyTextToClipboard(item.text)
+                    }
+                    if item.rawText != item.text {
+                        Button("Copy Raw") {
+                            state.copyTextToClipboard(item.rawText)
+                        }
+                    }
+                    Spacer()
+                    Button("Close") {
+                        state.selectedHistoryItem = nil
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding()
         }
     }
 }
@@ -790,9 +868,9 @@ struct ShortcutEditSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Press the new keys for \(title).")
                 .font(.headline)
-            ShortcutRecorderField(shortcut: $shortcut)
+            ShortcutRecorderField(shortcut: $shortcut, onChange: { _ in })
                 .frame(height: 44)
-            Text("Hold the desired modifier keys (⌘, ⌥, ⇧, ⌃) and tap the final key.")
+            Text("Hold the desired modifiers (⌘, ⌥, ⇧, ⌃) with or without a letter/number. A modifier-only combo like Right Option is allowed.")
                 .font(.caption)
                 .foregroundColor(.secondary)
             HStack {
@@ -800,71 +878,59 @@ struct ShortcutEditSheet: View {
                 Spacer()
                 Button("Save", action: onSave)
                     .buttonStyle(.borderedProminent)
+                    .disabled(!shortcut.isValid)
             }
         }
         .padding()
         .frame(width: 320)
+        .onSubmit { onSave() }
     }
 }
 
 struct ShortcutCaptureField: View {
     var title: String
-    @Binding var shortcut: RecordingShortcut
-    var onChange: (RecordingShortcut) -> Void
-    @State private var isEditing = false
-    @State private var draftShortcut: RecordingShortcut
-
-    init(title: String, shortcut: Binding<RecordingShortcut>, onChange: @escaping (RecordingShortcut) -> Void) {
-        self.title = title
-        _shortcut = shortcut
-        self.onChange = onChange
-        _draftShortcut = State(initialValue: shortcut.wrappedValue)
-    }
+    var subtitle: String
+    var shortcutText: String
+    var onTap: () -> Void
 
     var body: some View {
-        Button {
-            draftShortcut = shortcut
-            isEditing = true
-        } label: {
-            HStack {
-                Text(shortcut.displayText.isEmpty ? "Set Shortcut" : shortcut.displayText)
-                    .font(.body)
-                Spacer()
-                Image(systemName: "pencil")
-                    .foregroundColor(.secondary)
-            }
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.primary.opacity(0.2))
-            )
-        }
-        .buttonStyle(.plain)
-        .sheet(isPresented: $isEditing) {
-            ShortcutEditSheet(
-                title: title,
-                shortcut: $draftShortcut,
-                onSave: {
-                    shortcut = draftShortcut
-                    onChange(draftShortcut)
-                    isEditing = false
-                },
-                onCancel: {
-                    isEditing = false
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+            Button(action: onTap) {
+                HStack {
+                    Text(shortcutText.isEmpty ? "Click to set shortcut" : shortcutText)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "pencil")
+                        .foregroundColor(.secondary)
                 }
-            )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.primary.opacity(0.25), lineWidth: 1.2)
+                )
+            }
+            .buttonStyle(.plain)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
     }
 }
 
 struct ShortcutRecorderField: NSViewRepresentable {
     @Binding var shortcut: RecordingShortcut
+    var onChange: (RecordingShortcut) -> Void
 
     func makeNSView(context: Context) -> ShortcutTextField {
         let field = ShortcutTextField()
         field.placeholderString = "Press new shortcut"
         field.onShortcut = { newShortcut in
             shortcut = newShortcut
+            onChange(newShortcut)
         }
         field.stringValue = shortcut.displayText
         return field
@@ -889,6 +955,15 @@ struct ShortcutRecorderField: NSViewRepresentable {
             fatalError("init(coder:) has not been implemented")
         }
 
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.makeFirstResponder(self)
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+            true
+        }
+
         override var acceptsFirstResponder: Bool { true }
 
         override func mouseDown(with event: NSEvent) {
@@ -899,6 +974,17 @@ struct ShortcutRecorderField: NSViewRepresentable {
             guard let chars = event.charactersIgnoringModifiers, let char = chars.uppercased().first else { return }
             let normalized = RecordingShortcut.normalizeModifiers(event.modifierFlags)
             let shortcut = RecordingShortcut(key: String(char), modifiers: normalized)
+            stringValue = shortcut.displayText
+            onShortcut?(shortcut)
+        }
+
+        override func flagsChanged(with event: NSEvent) {
+            let normalized = RecordingShortcut.normalizeModifiers(event.modifierFlags)
+            // Ignore if no modifiers held
+            if normalized.isEmpty {
+                return
+            }
+            let shortcut = RecordingShortcut(key: "", modifiers: normalized)
             stringValue = shortcut.displayText
             onShortcut?(shortcut)
         }

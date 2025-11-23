@@ -24,17 +24,32 @@ final class ShortcutManager {
 
     private func installTapIfNeeded() {
         guard eventTap == nil else { return }
-        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true]
+        guard AXIsProcessTrustedWithOptions(options as CFDictionary) else {
+            NSLog("Luma needs Accessibility permissions to register global shortcuts. Please grant them in System Settings > Privacy & Security > Accessibility.")
+            return
+        }
+
+        let mask = CGEventMask((1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue))
         let callback: CGEventTapCallBack = { _, type, event, refcon in
-            guard type == .keyDown, let refcon = refcon else {
+            // Auto-reenable if the system temporarily disables the tap.
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let refcon = refcon {
+                    let manager = Unmanaged<ShortcutManager>.fromOpaque(refcon).takeUnretainedValue()
+                    if let tap = manager.eventTap {
+                        CGEvent.tapEnable(tap: tap, enable: true)
+                    }
+                }
                 return Unmanaged.passUnretained(event)
             }
+            guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<ShortcutManager>.fromOpaque(refcon).takeUnretainedValue()
-            manager.handle(event: event)
+            manager.handle(event: event, type: type)
             return Unmanaged.passUnretained(event)
         }
         eventTap = CGEvent.tapCreate(
-            tap: .cghidEventTap,
+            tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .listenOnly,
             eventsOfInterest: mask,
@@ -47,15 +62,33 @@ final class ShortcutManager {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
     }
 
-    private func handle(event: CGEvent) {
+    private func handle(event: CGEvent, type: CGEventType) {
         guard let handler else { return }
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
-        if let shortcut = temporaryShortcut, shortcut.matches(keyCode: keyCode, flags: flags) {
-            DispatchQueue.main.async { handler(.temporaryPrompt) }
-        } else if let shortcut = mainShortcut, shortcut.matches(keyCode: keyCode, flags: flags) {
-            DispatchQueue.main.async { handler(.mainContent) }
-        } else if keyCode == CGKeyCode(kVK_Escape) {
+
+        // Modifier-only shortcuts fire on flagsChanged; key+modifier fire on keyDown.
+        if let shortcut = temporaryShortcut {
+            if shortcut.isModifierOnly, type == .flagsChanged, shortcut.matches(keyCode: nil, flags: flags) {
+                DispatchQueue.main.async { handler(.temporaryPrompt) }
+                return
+            } else if !shortcut.isModifierOnly, type == .keyDown, shortcut.matches(keyCode: keyCode, flags: flags) {
+                DispatchQueue.main.async { handler(.temporaryPrompt) }
+                return
+            }
+        }
+
+        if let shortcut = mainShortcut {
+            if shortcut.isModifierOnly, type == .flagsChanged, shortcut.matches(keyCode: nil, flags: flags) {
+                DispatchQueue.main.async { handler(.mainContent) }
+                return
+            } else if !shortcut.isModifierOnly, type == .keyDown, shortcut.matches(keyCode: keyCode, flags: flags) {
+                DispatchQueue.main.async { handler(.mainContent) }
+                return
+            }
+        }
+
+        if type == .keyDown && keyCode == CGKeyCode(kVK_Escape) {
             DispatchQueue.main.async { [weak self] in
                 self?.cancelHandler?()
             }

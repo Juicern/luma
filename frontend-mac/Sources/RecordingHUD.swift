@@ -32,7 +32,7 @@ final class RecordingHUD {
     private func ensurePanel() {
         guard panel == nil else { return }
 
-        let contentRect = NSRect(x: 0, y: 0, width: 420, height: 120)
+        let contentRect = NSRect(x: 0, y: 0, width: 320, height: 120)
         let panel = NSPanel(
             contentRect: contentRect,
             styleMask: [.nonactivatingPanel, .borderless],
@@ -49,34 +49,35 @@ final class RecordingHUD {
         effectView.material = .hudWindow
         effectView.state = .active
         effectView.wantsLayer = true
-        effectView.layer?.cornerRadius = 16
+        effectView.layer?.cornerRadius = 12
         effectView.layer?.masksToBounds = true
 
         let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
+        stack.orientation = .vertical
+        stack.alignment = .centerX
         stack.distribution = .gravityAreas
-        stack.spacing = 12
+        stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let spinner = NSProgressIndicator()
         spinner.style = .spinning
-        spinner.controlSize = .large
+        spinner.controlSize = .regular
 
         let label = NSTextField(labelWithString: "Listening…")
         label.font = NSFont.systemFont(ofSize: 16, weight: .medium)
         label.textColor = NSColor.labelColor
         label.lineBreakMode = .byWordWrapping
+        label.alignment = .center
 
         stack.addArrangedSubview(spinner)
         stack.addArrangedSubview(label)
 
         effectView.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: effectView.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: effectView.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: effectView.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: effectView.bottomAnchor, constant: -20)
+            stack.leadingAnchor.constraint(equalTo: effectView.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: effectView.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: effectView.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(equalTo: effectView.bottomAnchor, constant: -16)
         ])
 
         panel.contentView = effectView

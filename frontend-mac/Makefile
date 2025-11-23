@@ -1,14 +1,14 @@
-# LumaMac Makefile
+# Luma Makefile
 # -----------------
 # Helpful targets:
 #   make build    - debug build for developers
 #   make run      - run the debug build
 #   make release  - optimized build (needed before bundling)
-#   make bundle   - wraps the release binary in a .app bundle (../dist/LumaMac.app)
-#   make dmg      - builds a signed DMG at ../dist/LumaMac.dmg for easy sharing
+#   make bundle   - wraps the release binary in a .app bundle (../dist/Luma.app)
+#   make dmg      - builds a signed DMG at ../dist/Luma.dmg for easy sharing
 #   make clean    - removes Swift build artifacts and packaged output
 
-APP_NAME := LumaMac
+APP_NAME := Luma
 DIST_DIR := ../dist
 APP_BUNDLE := $(DIST_DIR)/$(APP_NAME).app
 DMG_ROOT := $(DIST_DIR)/dmg-root
@@ -23,7 +23,7 @@ build:
 	swift build
 
 run:
-	swift run $(APP_NAME)
+	LUMA_BACKEND_URL=https://luma-api.juicernchu.store swift run $(APP_NAME)
 
 # run against local backend
 run-local:
@@ -65,6 +65,8 @@ bundle: release
 	'    <true/>' \
 	'    <key>NSMicrophoneUsageDescription</key>' \
 	'    <string>Luma needs microphone access to capture prompts and content.</string>' \
+	'    <key>NSInputMonitoringUsageDescription</key>' \
+	'    <string>Luma needs Input Monitoring to capture global shortcuts (e.g., Right Option) even when you are in other apps.</string>' \
 	'    <key>NSApplicationSupportsAutomaticGraphicsSwitching</key>' \
 	'    <true/>' \
 	'    <key>LumaBackendURL</key>' \
@@ -75,7 +77,34 @@ bundle: release
 	cp -R $(APP_BUNDLE) $(DMG_ROOT)/
 
 dmg: bundle
+	# Add Applications alias so the DMG shows a simple drag-to-install layout.
+	@if [ ! -e $(DMG_ROOT)/Applications ]; then ln -s /Applications $(DMG_ROOT)/Applications; fi
+	@rm -f $(DMG_FILE)
 	hdiutil create -volname "$(VOLUME_NAME)" -srcfolder $(DMG_ROOT) -ov -format UDZO $(DMG_FILE)
+	@MNT=$$(mktemp -d /tmp/luma-dmg-XXXX); \
+	hdiutil attach -quiet -mountpoint $$MNT $(DMG_FILE); \
+	sleep 1; \
+	osascript \
+		-e 'set dmgFolder to POSIX file "'$$MNT'"' \
+		-e 'tell application "Finder"' \
+		-e 'set w to open dmgFolder' \
+		-e 'set w to window 1' \
+		-e 'set target of w to dmgFolder' \
+		-e 'set current view of w to icon view' \
+		-e 'set toolbar visible of w to false' \
+		-e 'set statusbar visible of w to false' \
+		-e 'set bounds of w to {200, 200, 800, 500}' \
+		-e 'set theViewOptions to icon view options of w' \
+		-e 'set arrangement of theViewOptions to not arranged' \
+		-e 'set icon size of theViewOptions to 128' \
+		-e 'try' \
+		-e 'set position of item "Luma.app" of w to {400, 220}' \
+		-e 'set position of item "Applications" of w to {150, 220}' \
+		-e 'end try' \
+		-e 'delay 1' \
+		-e 'close w' \
+		-e 'end tell'; \
+	hdiutil detach -quiet $$MNT
 
 clean:
 	swift package clean

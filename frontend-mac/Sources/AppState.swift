@@ -6,6 +6,7 @@ import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
 import Carbon
+import Security
 #endif
 
 #if os(macOS)
@@ -27,7 +28,7 @@ struct UserProfile: Identifiable, Codable, Hashable {
     let email: String
 }
 
-struct RecordingShortcut: Hashable {
+struct RecordingShortcut: Hashable, Codable {
     var key: String
     private var modifiersRaw: UInt
 
@@ -42,6 +43,31 @@ struct RecordingShortcut: Hashable {
         self.modifiersRaw = RecordingShortcut.normalizeModifiers(modifiers).rawValue
     }
     #endif
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case modifiersRaw
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(String.self, forKey: .key)
+        modifiersRaw = try container.decode(UInt.self, forKey: .modifiersRaw)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(key, forKey: .key)
+        try container.encode(modifiersRaw, forKey: .modifiersRaw)
+    }
+
+    var isModifierOnly: Bool {
+        key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var isValid: Bool {
+        !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || modifiersRaw != 0
+    }
 
     var displayText: String {
 #if os(macOS)
@@ -62,7 +88,8 @@ struct RecordingShortcut: Hashable {
 #else
         let parts: [String] = []
 #endif
-        return (parts + [key.uppercased()]).joined()
+        let keyPart = key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [key.uppercased()]
+        return (parts + keyPart).joined(separator: " ")
     }
 
 #if os(macOS)
@@ -111,7 +138,11 @@ struct RecordingShortcut: Hashable {
 
     #if os(macOS)
     var keyEquivalent: KeyEquivalent {
-        KeyEquivalent(Character(key.lowercased()))
+        if let first = key.lowercased().first {
+            return KeyEquivalent(first)
+        }
+        // Modifier-only shortcuts: don't bind a real key; use space as a benign placeholder.
+        return KeyEquivalent(" ")
     }
 
     var eventModifiers: SwiftUI.EventModifiers {
@@ -138,8 +169,10 @@ struct RecordingShortcut: Hashable {
         CGKeyCode(carbonKeyCode)
     }
 
-    func matches(keyCode: CGKeyCode, flags eventFlags: NSEvent.ModifierFlags) -> Bool {
-        guard keyCode == cgKeyCode else { return false }
+    func matches(keyCode: CGKeyCode?, flags eventFlags: NSEvent.ModifierFlags) -> Bool {
+        if !isModifierOnly {
+            guard let keyCode, keyCode == cgKeyCode else { return false }
+        }
         let normalizedRequired = RecordingShortcut.normalizeModifiers(NSEvent.ModifierFlags(rawValue: modifiersRaw))
         let normalizedEvent = RecordingShortcut.normalizeModifiers(eventFlags)
         return ModifierSignature(flags: normalizedEvent).satisfies(required: ModifierSignature(flags: normalizedRequired))
@@ -285,9 +318,17 @@ final class AppState: ObservableObject {
     @Published var temporaryShortcut = RecordingShortcut(key: "R", modifiers: [.command, .option])
     @Published var mainShortcut = RecordingShortcut(key: "M", modifiers: [.option])
     @Published var allowSharedShortcut = true {
-        didSet { rebindShortcuts() }
+        didSet {
+            if allowSharedShortcut && !isRestoringSettings {
+                mainShortcut = temporaryShortcut
+            }
+            rebindShortcuts()
+            persistSettings()
+        }
     }
-    @Published var clipboardEnabled = true
+    @Published var clipboardEnabled = true {
+        didSet { persistSettings() }
+    }
     @Published var contextText: String = ""
     @Published var recordingIndicator: String = ""
     @Published var latestPromptText: String = ""
@@ -303,13 +344,18 @@ final class AppState: ObservableObject {
     @Published var selectedModel: String = ""
     @Published var presets: [PromptPresetModel] = []
     @Published var templateOverrides: [String: PromptPresetModel] = [:]
-    @Published var selectedPresetID: String?
-    @Published var activeTemplateKey: String?
+    @Published var selectedPresetID: String? {
+        didSet { persistSettings() }
+    }
+    @Published var activeTemplateKey: String? {
+        didSet { persistSettings() }
+    }
     @Published var presetStatus: String = ""
     @Published var transcriptionHistory: [TranscriptionHistoryItem] = []
     @Published var transcriptionSearch: String = ""
     @Published var selectedPanel: DashboardPanel = .guide
     @Published var promptPreview: PromptPreviewState?
+    @Published var selectedHistoryItem: TranscriptionHistoryItem?
     @Published var isAddPromptPresented = false
     @Published var editingTemplateKey: String?
     @Published var editingPresetID: String?
@@ -343,6 +389,10 @@ final class AppState: ObservableObject {
     private var pendingPasteTarget: NSRunningApplication?
     private var pendingCancelDeadline: Date?
     private var cancelResetWorkItem: DispatchWorkItem?
+    private let defaults = UserDefaults.standard
+    private var isRestoringSettings = false
+    private var pendingStoredPresetID: String?
+    private var pendingStoredTemplateKey: String?
 #endif
     private var audioRecorder: AVAudioRecorder?
     private var currentRecordingURL: URL?
@@ -352,15 +402,16 @@ final class AppState: ObservableObject {
 
     func bootstrap() {
         applyBackendOverride()
+        loadLocalSettings()
         requestMicrophonePermission()
         requestAccessibilityPermission()
 #if os(macOS)
         refreshClipboard()
         refreshAccessibilityState()
 #endif
-        rebindShortcuts()
         restoreSession()
         updateActiveModel()
+        rebindShortcuts()
     }
 
     private func applyBackendOverride() {
@@ -373,6 +424,58 @@ final class AppState: ObservableObject {
         if let envURL = ProcessInfo.processInfo.environment["LUMA_BACKEND_URL"], !envURL.isEmpty {
             backendBaseURL = envURL
         }
+    }
+
+    private func loadLocalSettings() {
+#if os(macOS)
+        isRestoringSettings = true
+        let decoder = JSONDecoder()
+        if let data = defaults.data(forKey: DefaultsKeys.temporaryShortcut),
+           let shortcut = try? decoder.decode(RecordingShortcut.self, from: data) {
+            if shortcut.isValid { temporaryShortcut = shortcut }
+        }
+        if let data = defaults.data(forKey: DefaultsKeys.mainShortcut),
+           let shortcut = try? decoder.decode(RecordingShortcut.self, from: data) {
+            if shortcut.isValid { mainShortcut = shortcut }
+        }
+        if defaults.object(forKey: DefaultsKeys.allowSharedShortcut) != nil {
+            allowSharedShortcut = defaults.bool(forKey: DefaultsKeys.allowSharedShortcut)
+        }
+        if defaults.object(forKey: DefaultsKeys.clipboardEnabled) != nil {
+            clipboardEnabled = defaults.bool(forKey: DefaultsKeys.clipboardEnabled)
+        }
+        if !mainShortcut.isValid && allowSharedShortcut {
+            mainShortcut = temporaryShortcut
+        }
+        pendingStoredPresetID = defaults.string(forKey: DefaultsKeys.selectedPresetID)
+        pendingStoredTemplateKey = defaults.string(forKey: DefaultsKeys.activeTemplateKey)
+        isRestoringSettings = false
+#endif
+    }
+
+    private func persistSettings() {
+#if os(macOS)
+        guard !isRestoringSettings else { return }
+        let encoder = JSONEncoder()
+        if temporaryShortcut.isValid, let data = try? encoder.encode(temporaryShortcut) {
+            defaults.set(data, forKey: DefaultsKeys.temporaryShortcut)
+        }
+        if mainShortcut.isValid, let data = try? encoder.encode(mainShortcut) {
+            defaults.set(data, forKey: DefaultsKeys.mainShortcut)
+        }
+        defaults.set(allowSharedShortcut, forKey: DefaultsKeys.allowSharedShortcut)
+        defaults.set(clipboardEnabled, forKey: DefaultsKeys.clipboardEnabled)
+        if let presetID = selectedPresetID {
+            defaults.set(presetID, forKey: DefaultsKeys.selectedPresetID)
+        } else {
+            defaults.removeObject(forKey: DefaultsKeys.selectedPresetID)
+        }
+        if let templateKey = activeTemplateKey {
+            defaults.set(templateKey, forKey: DefaultsKeys.activeTemplateKey)
+        } else {
+            defaults.removeObject(forKey: DefaultsKeys.activeTemplateKey)
+        }
+#endif
     }
 
     func requestMicrophonePermission() {
@@ -469,6 +572,7 @@ final class AppState: ObservableObject {
     }
 
     func updateShortcut(_ shortcut: RecordingShortcut, forTemporary: Bool) {
+        guard shortcut.isValid else { return }
         if forTemporary {
             temporaryShortcut = shortcut
             if allowSharedShortcut {
@@ -478,14 +582,17 @@ final class AppState: ObservableObject {
             mainShortcut = shortcut
         }
         rebindShortcuts()
+        persistSettings()
     }
 
     func login() {
+        let email = loginEmail
+        let password = loginPassword
         guard let url = URL(string: "\(backendBaseURL)/api/v1/login") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload = ["email": loginEmail, "password": loginPassword]
+        let payload = ["email": email, "password": password]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
@@ -504,6 +611,11 @@ final class AppState: ObservableObject {
                     return
                 }
                 self.applyLoggedInUser(user)
+                #if os(macOS)
+                if !password.isEmpty {
+                    CredentialStore.shared.save(email: email, password: password)
+                }
+                #endif
                 self.loginStatus = "Signed in"
                 self.loginPassword = ""
                 self.loadAPIKeys()
@@ -910,6 +1022,26 @@ final class AppState: ObservableObject {
                     } else {
                         self.selectedPresetID = nil
                     }
+                    let targetPresetID = self.pendingStoredPresetID ?? self.selectedPresetID
+                    if let presetID = targetPresetID,
+                       let preset = custom.first(where: { $0.id == presetID }) {
+                        self.isRestoringSettings = true
+                        self.activatePreset(preset)
+                        self.isRestoringSettings = false
+                        self.pendingStoredPresetID = nil
+                    }
+                    if let templateKey = self.pendingStoredTemplateKey {
+                        if let overridePreset = overrides[templateKey] {
+                            self.isRestoringSettings = true
+                            self.activatePreset(overridePreset)
+                            self.isRestoringSettings = false
+                        } else if let template = self.defaultPromptTemplates.first(where: { $0.key == templateKey }) {
+                            self.isRestoringSettings = true
+                            self.activateTemplate(template)
+                            self.isRestoringSettings = false
+                        }
+                        self.pendingStoredTemplateKey = nil
+                    }
                 }
             }
         }.resume()
@@ -1191,6 +1323,18 @@ final class AppState: ObservableObject {
 
     func copyLatestContentToClipboard() {
         copyResultToClipboard(latestContentText)
+    }
+
+    func loadCredentialsFromKeychain() {
+#if os(macOS)
+        if let creds = CredentialStore.shared.load() {
+            loginEmail = creds.email
+            loginPassword = creds.password
+            loginStatus = "Loaded from Keychain"
+        } else {
+            loginStatus = "No saved credentials"
+        }
+#endif
     }
 
     private func applyTranscription(_ text: String, mode: RecordingMode, duration: TimeInterval, historyEntry: TranscriptionHistoryItem?) {
@@ -1605,3 +1749,62 @@ private struct PendingContentJob {
     let id: String
     let duration: TimeInterval
 }
+
+private enum DefaultsKeys {
+    static let temporaryShortcut = "luma.pref.tempShortcut"
+    static let mainShortcut = "luma.pref.mainShortcut"
+    static let allowSharedShortcut = "luma.pref.allowSharedShortcut"
+    static let clipboardEnabled = "luma.pref.clipboardEnabled"
+    static let selectedPresetID = "luma.pref.selectedPresetID"
+    static let activeTemplateKey = "luma.pref.activeTemplateKey"
+}
+
+#if os(macOS)
+final class CredentialStore {
+    static let shared = CredentialStore()
+    private let service = "com.juicern.luma.credentials"
+
+    func save(email: String, password: String) {
+        guard !email.isEmpty, !password.isEmpty else { return }
+        let passwordData = password.data(using: .utf8) ?? Data()
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: email
+        ]
+        SecItemDelete(query as CFDictionary)
+        var attributes = query
+        attributes[kSecValueData as String] = passwordData
+        SecItemAdd(attributes as CFDictionary, nil)
+    }
+
+    func load() -> (email: String, password: String)? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess,
+              let dict = item as? [String: Any],
+              let email = dict[kSecAttrAccount as String] as? String,
+              let data = dict[kSecValueData as String] as? Data,
+              let password = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return (email, password)
+    }
+
+    func clear(email: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: email
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
+#endif

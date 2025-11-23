@@ -11,7 +11,7 @@ struct LumaMacApp: App {
     #endif
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("Luma") {
             ContentView()
                 .environmentObject(state)
                 .onAppear { state.bootstrap() }

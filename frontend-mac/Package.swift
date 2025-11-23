@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "LumaMac",
+    name: "Luma",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "LumaMac", targets: ["LumaMac"])
+        .executable(name: "Luma", targets: ["LumaMac"])
     ],
     targets: [
         .executableTarget(
