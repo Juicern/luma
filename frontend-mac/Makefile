@@ -14,6 +14,7 @@ APP_BUNDLE := $(DIST_DIR)/$(APP_NAME).app
 DMG_ROOT := $(DIST_DIR)/dmg-root
 DMG_FILE := $(DIST_DIR)/$(APP_NAME).dmg
 VOLUME_NAME := Luma
+LUMA_BACKEND_URL ?= http://localhost:8080
 
 .PHONY: all build run release bundle dmg clean
 
@@ -23,11 +24,7 @@ build:
 	swift build
 
 run:
-	LUMA_BACKEND_URL=https://luma-api.juicernchu.store swift run $(APP_NAME)
-
-# run against local backend
-run-local:
-	LUMA_BACKEND_URL=http://localhost:8080 swift run $(APP_NAME)
+	LUMA_BACKEND_URL=$(LUMA_BACKEND_URL) swift run $(APP_NAME)
 
 release:
 	swift build -c release
@@ -70,7 +67,7 @@ bundle: release
 	'    <key>NSApplicationSupportsAutomaticGraphicsSwitching</key>' \
 	'    <true/>' \
 	'    <key>LumaBackendURL</key>' \
-	'    <string>https://luma-api.juicernchu.store</string>' \
+	'    <string>$(LUMA_BACKEND_URL)</string>' \
 	'</dict>' \
 	'</plist>' \
 	> $$APP_ROOT/Info.plist

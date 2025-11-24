@@ -11,7 +11,7 @@ Backend (Go) + macOS frontend (SwiftUI) for capturing audio, transcribing, rewri
 ## Quick start
 
 ### Prereqs
-- Go 1.21+ and PostgreSQL (local or AWS)
+- Go 1.21+ and PostgreSQL (local)
 - Swift 5.9+ / Xcode 15+ on macOS 13+
 
 ### Backend (local)
@@ -27,17 +27,9 @@ Health check: `curl http://localhost:8080/healthz`
 ### Frontend (local)
 ```bash
 cd frontend-mac
-make run-local   # uses http://localhost:8080
+make run         # uses http://localhost:8080 by default
 ```
-The distributed DMG is baked to hit `https://luma-api.juicernchu.store`; override with `LUMA_BACKEND_URL=... make run` if needed.
-
-## Deploying backend to AWS (high level)
-1. Run server on EC2/ECS (listening on 8080) with Postgres (RDS or EC2).  
-2. Put an ALB in front, listener 443 → target group port 8080.  
-3. Issue ACM cert for your domain (e.g., `luma-api.juicernchu.store`) and attach to ALB.  
-4. Add DNS CNAME `luma-api -> <alb_dns_name>`.  
-5. Set env vars (`DATABASE_DSN`, `LUMA_SECRET_KEY`, etc.) on the instance/task.  
-6. Verify: `curl https://luma-api.yourdomain/healthz`.
+Set `LUMA_BACKEND_URL=... make run` if you need to point at a different backend.
 
 ## CI/CD
 - GitHub Actions: `backend-ci.yml` runs `go test ./...`; `frontend-dmg.yml` builds and uploads a DMG artifact on macOS runners.
@@ -58,7 +50,7 @@ The distributed DMG is baked to hit `https://luma-api.juicernchu.store`; overrid
 
 ## Handy commands
 - Backend: `make run`, `make db`, `make test`, `make release`
-- Frontend: `make run` (uses baked AWS URL), `make run-local` (localhost), `make dmg`
+- Frontend: `make run` (uses localhost by default), `make dmg`
 
 ## Repo layout
 ```
