@@ -11,6 +11,7 @@ final class ShortcutManager {
     private var handler: ((RecordingMode) -> Void)?
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var isPaused = false
 
     private init() {}
 
@@ -23,15 +24,11 @@ final class ShortcutManager {
     }
 
     func pause() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-        }
+        isPaused = true
     }
 
     func resume() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: true)
-        }
+        isPaused = false
     }
 
     private func installTapIfNeeded() {
@@ -75,6 +72,7 @@ final class ShortcutManager {
     }
 
     private func handle(event: CGEvent, type: CGEventType) {
+        if isPaused { return }
         guard let handler else { return }
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
