@@ -442,6 +442,7 @@ struct ShortcutCard: View {
                     subtitle: state.temporaryShortcut.descriptiveLabel,
                     shortcutText: state.temporaryShortcut.displayText.isEmpty ? "Click to set shortcut" : state.temporaryShortcut.displayText
                 ) {
+                    ShortcutManager.shared.pause()
                     draftShortcut = state.temporaryShortcut
                     editingKind = .temporary
                 }
@@ -450,6 +451,7 @@ struct ShortcutCard: View {
                     subtitle: state.mainShortcut.descriptiveLabel,
                     shortcutText: state.mainShortcut.displayText.isEmpty ? "Click to set shortcut" : state.mainShortcut.displayText
                 ) {
+                    ShortcutManager.shared.pause()
                     draftShortcut = state.mainShortcut
                     editingKind = .main
                 }
@@ -458,7 +460,9 @@ struct ShortcutCard: View {
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .sheet(item: $editingKind, content: { kind in
+        .sheet(item: $editingKind, onDismiss: {
+            ShortcutManager.shared.resume()
+        }, content: { kind in
             ShortcutEditSheet(
                 title: kind == .temporary ? "Temporary Prompt" : "Main Content",
                 shortcut: $draftShortcut,

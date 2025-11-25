@@ -22,6 +22,18 @@ final class ShortcutManager {
         installTapIfNeeded()
     }
 
+    func pause() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+        }
+    }
+
+    func resume() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+    }
+
     private func installTapIfNeeded() {
         guard eventTap == nil else { return }
 
