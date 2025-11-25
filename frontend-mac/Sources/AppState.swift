@@ -290,7 +290,7 @@ enum DashboardPanel: String, CaseIterable, Identifiable {
 
 final class AppState: ObservableObject {
     @Published var microphoneAuthorized = false
-    @Published var backendBaseURL = "http://localhost:8080"
+    @Published var backendBaseURL = "http://localhost:8090"
     @Published var currentUser: UserProfile?
     @Published var userID: String = ""
     @Published var loginEmail: String = ""

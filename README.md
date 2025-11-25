@@ -22,12 +22,12 @@ export DATABASE_DSN="postgres://postgres:postgres@localhost:5432/luma?sslmode=di
 go run ./cmd/migrate    # one-time schema
 make run                # or go run ./cmd/server
 ```
-Health check: `curl http://localhost:8080/healthz`
+Health check: `curl http://localhost:8090/healthz`
 
 ### Frontend (local)
 ```bash
 cd frontend-mac
-make run         # uses http://localhost:8080 by default
+make run         # uses http://localhost:8090 by default
 ```
 Set `LUMA_BACKEND_URL=... make run` if you need to point at a different backend.
 

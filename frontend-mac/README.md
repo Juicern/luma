@@ -6,7 +6,7 @@ SwiftUI app that records voice input, manages presets, and triggers the backend 
 
 - Xcode 15+ or Swift 5.9 toolchain
 - macOS 13+
-- Backend running locally (default `http://localhost:8080`)
+- Backend running locally (default `http://localhost:8090`)
 
 ## Run
 
