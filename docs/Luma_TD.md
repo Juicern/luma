@@ -317,7 +317,7 @@ Example:
 
 ```yaml
 server:
-  port: 8080
+  port: 8090
 
 database:
   dsn: postgres://postgres:postgres@localhost:5432/luma?sslmode=disable

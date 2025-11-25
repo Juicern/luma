@@ -94,7 +94,7 @@ func Load() Config {
 func defaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
-			Port:            "8080",
+			Port:            "8090",
 			ShutdownTimeout: 10 * time.Second,
 		},
 		Database: DatabaseConfig{

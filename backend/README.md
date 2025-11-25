@@ -14,7 +14,7 @@ Settings come from `config.yaml` (see committed example) and environment variabl
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `HTTP_PORT` | `8080` | Server port |
+| `HTTP_PORT` | `8090` | Server port |
 | `HTTP_SHUTDOWN_TIMEOUT` | `10` | Graceful shutdown timeout in seconds |
 | `LUMA_DB_DSN` | `postgres://postgres:postgres@localhost:5432/luma?sslmode=disable` | Postgres DSN connection string (DB is auto-created if missing) |
 | `LUMA_SECRET_KEY` | _required for API keys_ | Symmetric key for AES-GCM encryption |
@@ -78,23 +78,23 @@ All responses are JSON. Errors follow `{ "error": "<code>" }`.
 
 ```bash
 # 0) create a user
-curl -X POST http://localhost:8080/api/v1/users \
+curl -X POST http://localhost:8090/api/v1/users \
   -H "Content-Type: application/json" \
   -d '{"name":"Local User","email":"me@example.com","password":"changeme123"}'
 # -> grab the "id" (e.g., 2fc4...)
 
 # store a fake OpenAI key (required before rewrites)
-curl -X PUT http://localhost:8080/api/v1/api-keys/openai \
+curl -X PUT http://localhost:8090/api/v1/api-keys/openai \
   -H "Content-Type: application/json" \
   -d '{"user_id":"2fc4...","api_key":"sk-local-dev"}'
 
 # create a preset (still local single-user)
-curl -X POST http://localhost:8080/api/v1/presets \
+curl -X POST http://localhost:8090/api/v1/presets \
   -H "Content-Type: application/json" \
   -d '{"name":"Professional","prompt_text":"Write concise professional responses."}'
 
 # start a session
-curl -X POST http://localhost:8080/api/v1/sessions \
+curl -X POST http://localhost:8090/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{
     "user_id":"2fc4...",
@@ -106,11 +106,11 @@ curl -X POST http://localhost:8080/api/v1/sessions \
   }'
 
 # add content message and request rewrite
-curl -X POST http://localhost:8080/api/v1/sessions/<session-id>/messages \
+curl -X POST http://localhost:8090/api/v1/sessions/<session-id>/messages \
   -H "Content-Type: application/json" \
   -d '{"raw_text":"hey I cannot make it next week"}'
 
-curl -X POST http://localhost:8080/api/v1/sessions/<session-id>/rewrite \
+curl -X POST http://localhost:8090/api/v1/sessions/<session-id>/rewrite \
   -H "Content-Type: application/json" \
   -d '{"message_id":"<message-id>"}'
 ```

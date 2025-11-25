@@ -14,7 +14,7 @@ APP_BUNDLE := $(DIST_DIR)/$(APP_NAME).app
 DMG_ROOT := $(DIST_DIR)/dmg-root
 DMG_FILE := $(DIST_DIR)/$(APP_NAME).dmg
 VOLUME_NAME := Luma
-LUMA_BACKEND_URL ?= http://localhost:8080
+LUMA_BACKEND_URL ?= http://localhost:8090
 
 .PHONY: all build run release bundle dmg clean
 
